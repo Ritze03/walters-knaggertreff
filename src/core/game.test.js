@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng, HOST_SEAT, MAX_ITEMS } from '../contracts.js';
 import { applyIntent, botIntent, registerBoard } from './index.js';
-import { started, run, edit, deepFreeze, makeBoard, lobby } from './fixtures.js';
+import { started, run, edit, deepFreeze, makeBoard, lobby, startAll } from './fixtures.js';
 
 const at = (s, seat, spaceId, extra = {}) => edit(s, (d) => { Object.assign(d.players[seat], { spaceId }, extra); });
 
@@ -77,7 +77,7 @@ test('botIntent: ready in the intro, and an absent seat\'s turn is playable', ()
 function playBotGame({ players, starTarget, seed, maxIntents = 20000 }) {
   registerBoard(makeBoard());
   let s = lobby(players, { starTarget, seed });
-  s = run(s, 0, { type: 'startGame' }).state;
+  s = startAll(s).state;
   const rng = createRng(seed ^ 0xabcdef);
   let intents = 0, duels = 0;
   while (s.phase !== 'victory') {
@@ -139,7 +139,7 @@ test('round minigame starts only after EVERY seat has rolled that round; duels n
   registerBoard(makeBoard());
   for (const players of [2, 3, 4]) {
     for (let seed = 1; seed <= 8; seed++) {
-      let s = run(lobby(players, { starTarget: 5, seed }), 0, { type: 'startGame' }).state;
+      let s = startAll(lobby(players, { starTarget: 5, seed })).state;
       const rng = createRng(seed);
       const rolled = new Set();
       let roundMgs = 0;

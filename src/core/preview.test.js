@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HOST_SEAT } from '../contracts.js';
 import { applyIntent, previewPath, previewLanding, registerBoard, createGame } from './index.js';
-import { started, run, edit, makeBoard, profile } from './fixtures.js';
+import { started, run, edit, makeBoard, profile, startAll } from './fixtures.js';
 import spaeti from '../board/boards/spaeti.js';
 
 /** a state standing at fork `forkId` (seat 0) with `steps` left, at the path prompt */
@@ -73,7 +73,7 @@ test('previewLanding agrees with choosePath on the real Spaeti-Kiez board (both 
   registerBoard(spaeti);
   let s = createGame({ gameId: 'x', hostPlayerId: 'p0', hostProfile: profile(0), seed: 1, boardId: 'spaeti' });
   for (const i of [1, 2]) s = run(s, HOST_SEAT, { type: 'seatJoin', playerId: `p${i}`, profile: profile(i), isBot: false }).state;
-  s = run(s, 0, { type: 'startGame' }).state;
+  s = startAll(s).state;
   s = edit(s, (d) => { d.turnOrder = [0, 1, 2]; d.turnIndex = 0; d.turn.seat = 0; });
   const { n, again } = check(s, spaeti, 'spaeti');
   assert.ok(n > 60);

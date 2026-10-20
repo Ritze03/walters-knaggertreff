@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HOST_SEAT, PLAYER_COLORS, STAR_TARGET, STATE_VERSION, MAX_PLAYERS } from '../contracts.js';
-import { createGame, applyIntent, serialize, deserialize, resumeGame, getBoard, registerBoard } from './index.js';
+import { createGame, applyIntent, serialize, deserialize, resumeGame, getBoard, registerBoard, botIntent } from './index.js';
 import { RULES_FOR_STATE } from './rules.js';
-import { lobby, started, profile, run, edit, deepFreeze, types, makeBoard, registerFixture } from './fixtures.js';
+import { lobby, started, profile, run, edit, deepFreeze, types, makeBoard, registerFixture, startAll } from './fixtures.js';
 
 test('createGame: lobby, host seat 0, rules copied, defaults', () => {
   const s = createGame({ gameId: 'g', hostPlayerId: 'p0', hostProfile: profile(0), seed: 5 });
@@ -134,9 +134,9 @@ test('startGame: permissions, min players, initial state and events', () => {
   assert.equal(applyIntent(one, 0, { type: 'startGame' }).error, 'tooFewPlayers');
   const s = lobby(3);
   assert.equal(applyIntent(s, 1, { type: 'startGame' }).error, 'forbidden');
-  const absent = run(s, HOST_SEAT, { type: 'seatPresence', seat: 1, connected: false }).state;
+  const absent = run(run(s, 2, { type: 'setReady', ready: true }).state, HOST_SEAT, { type: 'seatPresence', seat: 1, connected: false }).state;   // the unready seat left
   assert.equal(run(absent, 0, { type: 'startGame' }).state.turnOrder.length, 2);
-  const r = run(s, 0, { type: 'startGame' });
+  const r = startAll(s);
   const g = r.state;
   assert.equal(g.phase, 'boardTurn');
   assert.equal(g.round, 1);
@@ -179,7 +179,66 @@ test('rematch: host only in victory, resets players, keeps seats + settings', ()
   assert.deepEqual(g.traps, {});
   assert.equal(g.seats.length, 2);   // the offline seat is dropped like any lobby seat
   assert.deepEqual(g.players[1], { coins: g.rules.startCoins, stars: 0, items: [], spaceId: null, mgWins: 0, skipTurns: 0 });
-  assert.equal(run(g, 0, { type: 'startGame' }).state.phase, 'boardTurn');
+  assert.equal(g.seats.every((x) => x.ready === false), true);   // everyone back to "not ready"
+  assert.equal(applyIntent(g, 0, { type: 'startGame' }).error, 'notReady');
+  assert.equal(startAll(g).state.phase, 'boardTurn');
+});
+
+test('setReady: toggles own seat in the lobby, idempotent, host seat/phase/payload errors', () => {
+  const s = lobby(3);
+  assert.deepEqual(s.seats.map((x) => x.ready), [false, false, false]);
+  const r1 = run(s, 1, { type: 'setReady', ready: true });
+  assert.deepEqual(r1.state.seats.map((x) => x.ready), [false, true, false]);
+  assert.equal(r1.state.rev, s.rev + 1);
+  const again = applyIntent(r1.state, 1, { type: 'setReady', ready: true });
+  assert.equal(again.error, null);
+  assert.equal(again.state, r1.state);   // no-op: same object, no rev bump
+  const off = run(r1.state, 1, { type: 'setReady', ready: false }).state;
+  assert.deepEqual(off.seats.map((x) => x.ready), [false, false, false]);
+  assert.equal(applyIntent(s, 0, { type: 'setReady', ready: true }).error, 'forbidden');   // host readies by starting
+  assert.equal(applyIntent(s, HOST_SEAT, { type: 'setReady', ready: true }).error, 'forbidden');
+  assert.equal(applyIntent(s, 1, { type: 'setReady', ready: 'yes' }).error, 'invalid');
+  assert.equal(applyIntent(s, 1, { type: 'setReady' }).error, 'invalid');
+  assert.equal(applyIntent(s, 9, { type: 'setReady', ready: true }).error, 'forbidden');
+  assert.equal(applyIntent(started(3), 1, { type: 'setReady', ready: true }).error, 'wrongPhase');
+});
+
+test('startGame: refused with notReady until every connected non-host seat is ready; host needs no flag; unready blocks again', () => {
+  let s = lobby(3);
+  assert.equal(applyIntent(s, 0, { type: 'startGame' }).error, 'notReady');
+  s = run(s, 1, { type: 'setReady', ready: true }).state;
+  assert.equal(applyIntent(s, 0, { type: 'startGame' }).error, 'notReady');
+  assert.equal(s.seats[0].ready, false);
+  s = run(s, 2, { type: 'setReady', ready: true }).state;
+  const off = run(s, 2, { type: 'setReady', ready: false }).state;
+  assert.equal(applyIntent(off, 0, { type: 'startGame' }).error, 'notReady');
+  assert.equal(applyIntent(off, 1, { type: 'startGame' }).error, 'forbidden');   // still host only
+  assert.equal(run(s, 0, { type: 'startGame' }).state.phase, 'boardTurn');
+  // too few players is reported before notReady
+  assert.equal(applyIntent(lobby(1), 0, { type: 'startGame' }).error, 'tooFewPlayers');
+});
+
+test('lobby ready: a join does not touch others, a new seat starts unready, a leaver stops blocking, old saves count as unready', () => {
+  let s = lobby(3);
+  s = run(run(s, 1, { type: 'setReady', ready: true }).state, 2, { type: 'setReady', ready: true }).state;
+  s = run(s, HOST_SEAT, { type: 'seatJoin', playerId: 'p3', profile: profile(3), isBot: false }).state;
+  assert.deepEqual(s.seats.map((x) => x.ready), [false, true, true, false]);
+  assert.equal(applyIntent(s, 0, { type: 'startGame' }).error, 'notReady');   // the newcomer holds the start back
+  s = run(s, HOST_SEAT, { type: 'seatPresence', seat: 3, connected: false }).state;   // ... until they leave
+  assert.equal(run(s, 0, { type: 'startGame' }).state.phase, 'boardTurn');
+  const old = edit(lobby(2), (d) => { for (const x of d.seats) delete x.ready; });   // pre-feature save
+  assert.equal(applyIntent(old, 0, { type: 'startGame' }).error, 'notReady');
+  assert.equal(run(run(old, 1, { type: 'setReady', ready: true }).state, 0, { type: 'startGame' }).state.phase, 'boardTurn');
+});
+
+test('botIntent in the lobby: not-ready non-host seat readies itself, host and ready seats do nothing', () => {
+  const s = lobby(3);
+  assert.deepEqual(botIntent(s, 1), { type: 'setReady', ready: true });
+  assert.equal(botIntent(s, 0), null);
+  const r = run(s, 1, botIntent(s, 1)).state;
+  assert.equal(botIntent(r, 1), null);
+  assert.equal(applyIntent(r, 0, { type: 'startGame' }).error, 'notReady');   // seat 2 has not readied yet
+  assert.equal(startAll(r).state.phase, 'boardTurn');
 });
 
 test('serialize / deserialize round trip, bad version and bad json -> null', () => {

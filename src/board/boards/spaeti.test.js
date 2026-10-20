@@ -99,6 +99,7 @@ function simulate(seed, nPlayers, stars) {
     return r.events;
   };
   for (let i = 1; i < nPlayers; i++) step(HOST_SEAT, { type: 'seatJoin', playerId: `p${i}`, profile: profile(i), isBot: true });
+  for (let i = 1; i < nPlayers; i++) step(i, { type: 'setReady', ready: true });
   step(0, { type: 'startGame' });
   const rng = createRng(seed ^ 0xabcdef);
   const seen = new Set();

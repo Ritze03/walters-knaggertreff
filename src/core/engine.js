@@ -53,7 +53,7 @@ function newSeat(st, playerId, profile, isHost, isBot) {
   const index = st.seats.length;
   const color = PLAYER_COLORS.find((col) => !colorTaken(st, col, -1)) ?? PLAYER_COLORS[0];
   const base = { playerId, name: `Spieler ${index + 1}`, color, hat: 'none' };
-  const seat = { index, playerId, profile: mergeProfile(st, -1, base, profile), connected: true, isHost, isBot: !!isBot };
+  const seat = { index, playerId, profile: mergeProfile(st, -1, base, profile), connected: true, isHost, isBot: !!isBot, ready: false };
   st.seats.push(seat);
   st.players.push(newPlayer(st.rules));
   return seat;
@@ -180,10 +180,21 @@ const HANDLERS = {
     c.st.settings = next;
   },
 
+  setReady(c, actor, i) {
+    const { st } = c;
+    if (st.phase !== 'lobby') fail(ERR.wrongPhase);
+    const seat = st.seats[actor];
+    if (seat.isHost) fail(ERR.forbidden);   // the host readies by pressing Start
+    if (typeof i.ready !== 'boolean') fail(ERR.invalid);
+    if (!!seat.ready === i.ready) return NOOP;
+    seat.ready = i.ready;
+  },
+
   startGame(c, actor) {
     requireHostSeat(c, actor, 'lobby');
     const { st } = c;
     if (connectedSeats(st).length < MIN_PLAYERS) fail(ERR.tooFewPlayers);
+    if (st.seats.some((s) => s.connected && !s.isHost && !s.ready)) fail(ERR.notReady);
     if (!hasBoard(st.settings.boardId)) fail(ERR.invalid);
     const board = boardOf(c);
     for (const p of st.players) p.spaceId = board.startSpaceId;
@@ -198,6 +209,7 @@ const HANDLERS = {
     requireHostSeat(c, actor, 'victory');
     const st = c.st;
     removeDisconnected(st);
+    for (const s of st.seats) s.ready = false;
     st.players = st.seats.map(() => newPlayer(st.rules));
     Object.assign(st, {
       phase: 'lobby', turnOrder: [], turnIndex: 0, round: 0, duelsThisRound: 0, turn: null, starSpaceId: null, traps: {},

@@ -33,6 +33,10 @@ function trapSpot(state, seat, board, rng) {
  */
 export function botIntent(state, seat) {
   const rng = createRng((state.rng ^ Math.imul(seat + 1, 0x9E3779B1) ^ Math.imul(state.rev + 1, 0x85EBCA6B)) >>> 0);
+  if (state.phase === 'lobby') {
+    const me = state.seats[seat];
+    return me && !me.isHost && !me.ready ? { type: 'setReady', ready: true } : null;
+  }
   if (state.phase === 'minigameIntro') {
     const mg = state.minigame;
     return mg.seats.includes(seat) && !mg.ready.includes(seat) ? { type: 'ready' } : null;

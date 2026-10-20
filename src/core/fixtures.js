@@ -51,9 +51,16 @@ export function lobby(n = 3, o = {}) {
   return s;
 }
 
+/** every non-host seat marks itself ready, then the host starts (the lobby gate of startGame) */
+export function startAll(state) {
+  let s = state;
+  for (const seat of s.seats) if (!seat.isHost && seat.connected) s = run(s, seat.index, { type: 'setReady', ready: true }).state;
+  return run(s, 0, { type: 'startGame' });
+}
+
 /** started game; turn order normalised to seat order (0,1,2..) with seat 0 to roll, star far away at s18, so tests are predictable */
 export function started(n = 3, o = {}) {
-  let s = run(lobby(n, o), 0, { type: 'startGame' }).state;
+  let s = startAll(lobby(n, o)).state;
   return edit(s, (d) => { d.turnOrder = d.seats.map((x) => x.index); d.turnIndex = 0; d.turn.seat = 0; d.starSpaceId = 's18'; });
 }
 

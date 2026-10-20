@@ -28,6 +28,7 @@ const ERR_TEXT = {
   [ERR.wrongStep]: 'Falscher Moment.',
   [ERR.invalid]: 'Das geht so nicht.',
   [ERR.tooFewPlayers]: 'Zu wenig Leute. Hol noch jemanden dazu.',
+  [ERR.notReady]: 'Nicht alle sind bereit. Ein bisschen Geduld.',
   [ERR.cantAfford]: 'Das Konto sagt nein.',
   [ERR.itemsFull]: 'Deine Taschen sind voll.',
   [ERR.full]: 'Die Lobby ist voll.',

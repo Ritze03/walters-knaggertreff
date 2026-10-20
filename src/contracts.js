@@ -245,7 +245,9 @@ export const KEYS = freeze({
 /** @typedef {'solo'|'arena'|'team'} MinigameKind */
 /** @typedef {'ffa'|'duel'|'team'} Mode */
 
-/** @typedef {{ index:number, playerId:string, profile:PlayerProfile, connected:boolean, isHost:boolean, isBot:boolean }} Seat
+/** @typedef {{ index:number, playerId:string, profile:PlayerProfile, connected:boolean, isHost:boolean, isBot:boolean, ready?:boolean }} Seat
+ *  ready = lobby "Bereit" flag (intent setReady). Only meaningful in 'lobby' for non-host seats: a new seat joins ready:false, rematch resets everyone to false,
+ *  the host seat never sets it (the host "readies" by pressing Start). Absent (old saves) = false, so readers use `!!seat.ready`; STATE_VERSION unchanged.
  *  index === position in state.seats. Seat 0 is the host. isBot is informational (tab runs ?bot, self-reported in `hello`).
  *  In 'lobby' a disconnected seat is REMOVED (indices re-packed); after startGame seats are permanent and only flip `connected`. */
 
@@ -339,16 +341,18 @@ export const KEYS = freeze({
 
 // ===== 6. Intents, events, core API  [core (implements), board/ui/main (call)] =====
 
-export const INTENT = en('setProfile', 'setSettings', 'startGame', 'rematch', 'roll', 'useItem', 'choosePath', 'buyStar', 'buyItem', 'ready',
+export const INTENT = en('setProfile', 'setSettings', 'startGame', 'rematch', 'roll', 'useItem', 'choosePath', 'buyStar', 'buyItem', 'ready', 'setReady',
   'seatJoin', 'seatPresence', 'advance', 'minigameDone');
-export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'invalid', 'tooFewPlayers', 'cantAfford', 'itemsFull', 'full', 'started', 'protocol');
+export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'invalid', 'tooFewPlayers', 'notReady', 'cantAfford', 'itemsFull', 'full', 'started', 'protocol');
 
 /** Player intents travel client -> host as MSG.intent. The host NEVER trusts a seat in the payload: it maps `from` playerId -> seat.
  *  WHO / WHEN:
  *   setProfile  any seat, phase lobby only (core trims name, keeps colour unique)
  *   setSettings host seat only, lobby   (starTarget STAR_TARGET.min..max or ?stars, boardId)
- *   startGame   host seat only, lobby, >= MIN_PLAYERS connected seats -> phase boardTurn, round 1, turn order shuffled, star placed
- *   rematch     host seat only, victory -> back to lobby keeping seats/settings (coins/stars reset)
+ *   setReady    non-host seat, phase lobby only: {ready:boolean} sets own seat.ready (idempotent). Host seat -> forbidden, other phase -> wrongPhase, non-boolean -> invalid
+ *   startGame   host seat only, lobby, >= MIN_PLAYERS connected seats (else tooFewPlayers) AND every connected non-host seat ready (else notReady)
+ *               -> phase boardTurn, round 1, turn order shuffled, star placed
+ *   rematch     host seat only, victory -> back to lobby keeping seats/settings (coins/stars reset, every seat.ready back to false)
  *   roll        turn.seat only, boardTurn step 'roll'
  *   useItem     turn.seat only, step 'roll' (before rolling). doubleDice/goldenDoener: no args. steal: targetSeat (other seat). trap: spaceId (no start/shop, no existing trap)
  *   choosePath  turn.seat only, step 'path': spaceId in turn.options
@@ -364,7 +368,7 @@ export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'in
  * | { type:'choosePath', spaceId:string }
  * | { type:'buyStar', accept:boolean }
  * | { type:'buyItem', item:(ItemId|null) }
- * | { type:'ready' }
+ * | { type:'ready' } | { type:'setReady', ready:boolean }
  * )} PlayerIntent */
 
 /** Host-internal intents: only applyIntent(state, HOST_SEAT, ...) accepts them (else ERR.forbidden). Sent by the host driver (section 11), never over the wire.
@@ -416,7 +420,7 @@ export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'in
  *        // availableMinigames: ids not in MINIGAMES are dropped; missing/empty => all of MINIGAMES (stored as settings.availableMinigames = null).
  *    applyIntent(state:GameState, actor:number, intent:Intent): ApplyResult,   // actor = seat index or HOST_SEAT
  *    botIntent(state:GameState, seat:number): (PlayerIntent|null),
- *        // the intent a sensible bot would send NOW for `seat` (roll, random path, buy star when affordable, sometimes buy/use items, ready); null if that seat has nothing to do.
+ *        // the intent a sensible bot would send NOW for `seat` (roll, random path, buy star when affordable, sometimes buy/use items, ready; in the lobby: setReady{ready:true} for a not-ready non-host seat); null if that seat has nothing to do.
  *        // Pure (derives its own randomness from state.rng WITHOUT advancing it). Used by: ?bot tabs for their own seat; the host driver for absent seats; tools/sim.mjs.
  *    pickMinigame(o:{ seats:number[], purpose:('round'|'duel'), forceId:(string|null), recent:string[], rng:Rng, allowed?:string[] }): (MinigameDescriptor|null),
  *        // table-driven from MINIGAMES. duel => solo kind, exactly 2 seats. team only if isTeamGameAllowed(seats.length) (teams shuffled, equal size). forceId honoured only if legal for this count AND in `allowed`. avoids `recent`.

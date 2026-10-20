@@ -50,6 +50,7 @@ function play() {
     return r.events;
   };
   for (let i = 1; i < NP; i++) ap(HOST_SEAT, { type: 'seatJoin', playerId: 'p' + i, profile: prof(i), isBot: true });
+  for (let i = 1; i < NP; i++) ap(i, { type: 'setReady', ready: true });
   ap(0, { type: 'startGame' });
   const rec = { src: {}, laps: 0, turns: 0, starPrompts: 0, duels: 0, duelsByRound: {}, firstTo: {}, leaderCoins: [], meanCoins: [], byRound: {}, finished: false, rounds: 0 };
   const onEvents = (evs) => {
