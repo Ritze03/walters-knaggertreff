@@ -19,9 +19,32 @@ export function createUi({ parent, input, audio }) {
     class: 'mute', testid: 'mute', title: 'Ton an/aus', 'aria-label': 'Ton an/aus',
     onclick: (e) => { audio.toggleMuted(); sync(); e.currentTarget.blur(); },
   });
-  const sync = () => { mute.textContent = audio.isMuted() ? '🔇' : '🔊'; mute.setAttribute('aria-pressed', String(audio.isMuted())); };
+  // master volume 0..100 (audio persists it). Native range: mouse drag, Tab + arrows/Home/End/PageUp/Down. It drops focus after a mouse drag
+  // and on Enter/Escape, because the Input layer ignores keys while an <input> is focused (the game would stop reacting to arrows/space).
+  let lastTick = 0;
+  const volume = h('input', {
+    class: 'volume', testid: 'volume', type: 'range', min: 0, max: 100, step: 5, 'aria-label': 'Lautstärke', title: 'Lautstärke',
+    oninput: () => {
+      audio.setMasterVolume(volume.value / 100);
+      if (audio.isMuted() && volume.value > 0) audio.setMuted(false);   // turning it up means "I want sound"
+      sync();
+      const now = performance.now();
+      if (now - lastTick > 120) { lastTick = now; audio.sfx('menuMove'); }
+    },
+    onpointerup: () => volume.blur(),
+    onkeydown: (e) => { if (['Enter', 'NumpadEnter', 'Escape'].includes(e.code)) volume.blur(); },
+  });
+  volume.value = String(Math.round(audio.getMasterVolume() * 100));
+  const sync = () => {
+    const off = audio.isMuted() || audio.getMasterVolume() === 0;
+    mute.textContent = off ? '🔇' : audio.getMasterVolume() < 0.4 ? '🔉' : '🔊';
+    mute.setAttribute('aria-pressed', String(audio.isMuted()));
+    volume.style.setProperty('--v', `${volume.value}%`);
+    volume.classList.toggle('off', audio.isMuted());
+  };
   sync();
-  root.append(panelSlot, hud, caption, toasts, hostGone, mute);
+  const sound = h('div', { class: 'sound' }, volume, mute);
+  root.append(panelSlot, hud, caption, toasts, hostGone, sound);
   parent.append(root);
 
   const nav = createNav({ input, audio, root });
