@@ -161,7 +161,9 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
         label: pv.landed ? '🎯 hier landest du' : '🎯 Abzweigung →?',
       });
     };
-    scene.cam.fit([here, ...opts.map(scene.spacePos), ...previews.map((pv) => scene.spacePos(pv.end))], 170, 0.9);
+    // the landing tag is ~300px wide: make room for it on both sides of every landing space
+    const ends = previews.map((pv) => scene.spacePos(pv.end));
+    scene.cam.fit([here, ...opts.map(scene.spacePos), ...ends, ...ends.flatMap((e) => [{ x: e.x - 170, y: e.y }, { x: e.x + 170, y: e.y }])], 120, 0.9);
     const menu = openMenu({
       title: 'Welchen Weg?', cards, hint: `${PICK}   ${HINT.confirm} bestätigen`, sel: 0, onSel: mark,
       onPick: (i) => send({ type: 'choosePath', spaceId: opts[i] }),

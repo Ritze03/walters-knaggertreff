@@ -61,6 +61,8 @@ export function mountOrdnungsamt(ctx) {
 
   const popup = (text, x, y, color, size = 30) => {
     const o = label(k, fx, text, x, y, { size, color, outline: [5, '#1b2a49'] });
+    const half = (o.width || 0) / 2 + 8;   // keep wide popups (KONTROLLIERT!) fully on screen near the arena edges
+    o.pos = k.vec2(Math.max(half, Math.min(ARENA.w - half, x)), y);
     o.onUpdate(() => { o.pos = k.vec2(o.pos.x, o.pos.y - 70 * k.dt()); o.opacity -= k.dt() * 0.8; if (o.opacity <= 0) o.destroy(); });
     return o;
   };

@@ -227,8 +227,11 @@ export function createScene({ k, root, board, anim, decorBuild }) {
     if (!pv.near) d.poly([[g.x - 26, g.y - 120 - bounce], [g.x + 26, g.y - 120 - bounce], [g.x, g.y - 72 - bounce]], C, { line: 5 });
     const label = pv.label;
     const w = textW(label, 24) + 40;
-    d.rect(g.x, g.y + 92, w, 44, '#2a2340', { anchor: 'center', r: 22, line: 5, lineColor: C });
-    d.dtext(label, g.x, g.y + 93, 24, '#ffffff', { line: 0 });
+    // the prompt panel covers the lower part of the screen: a landing space down there gets its tag above the pin instead of below
+    const low = world.pos.y + g.y * world.scale.y > H * 0.5;
+    const ty = low ? g.y - (pv.near ? 112 : 160) : g.y + 92;
+    d.rect(g.x, ty, w, 44, '#2a2340', { anchor: 'center', r: 22, line: 5, lineColor: C });
+    d.dtext(label, g.x, ty + 1, 24, '#ffffff', { line: 0 });
   });
 
   // ---------- camera ----------
