@@ -8,10 +8,11 @@ const INNER = BAR.w - 8;
 const PAUSE_MS = 1500;
 const STATUS = {
   wait: 'Bereit zum Download…', load: 'Lade Spieldateien…', hang: 'Verbinde mit Server…', rush: 'Lade Spieldateien…',
-  stall: 'Fast fertig…', unpack: 'Entpacke Texturen…', crawl: 'Entpacke Autos… (kann dauern)', over: 'Entpacke Autos… (kann dauern)',
+  stall: 'Fast fertig…', unpack: 'Entpacke Texturen…', verify: 'Verifiziere Dateien…', shader: 'Installiere Shader…',
+  stutter: 'Lade Spieldateien…', crawl: 'Entpacke Autos… (kann dauern)', over: 'Entpacke Autos… (kann dauern)',
 };
-const TIMES = ['14 Std. 7 Min.', '3 Sek.', 'Unbekannt', '-12 Min.', 'noch lange', '1 Jahr', 'gleich', '99 Std.'];
-const SPEEDS = ['0,3 KB/s', '847 MB/s', '12 Byte/s', '1,2 GB/s', 'Ja', '0 KB/s'];
+const TIMES = ['14 Std. 7 Min.', '3 Sek.', 'Unbekannt', '-12 Min.', 'noch lange', '1 Jahr', 'gleich', '99 Std.', '2 Wochen', '0 Sek. (lügt)', 'Berechne…', '∞', 'Nach dem Mittagessen', '7 Jahre 3 Monate'];
+const SPEEDS = ['0,3 KB/s', '847 MB/s', '12 Byte/s', '1,2 GB/s', 'Ja', '0 KB/s', '3 GB/s', '56k-Modem', 'Brieftaube', '404 MB/s', 'NaN', '1 Bit/s', 'Lichtgeschwindigkeit', '-5 MB/s'];
 
 export function mountForza(ctx) {
   const { k, root, input, audio } = ctx;
@@ -20,6 +21,7 @@ export function mountForza(ctx) {
   const curves = thumb ? null : makeCurves(ctx.seed);
   const botRng = createRng((ctx.seed ^ Math.imul(ctx.selfSeat + 1, 0x9E3779B1)) >>> 0);
   const aims = Array.from({ length: ATTEMPTS }, () => 99.4 + Math.pow(botRng.next(), 1.5) * 1.0);   // seeded imprecision: ~1 in 4 overshoots
+  const hist = [];   // bot: recent [elapsed ms, value] samples of the live bar
 
   // ---- scene ----
   box(k, root, 0, 0, 960, 720, '#5aa9e6');
@@ -66,7 +68,7 @@ export function mountForza(ctx) {
   let phase = 'wait';           // wait | run | pause | done  (thumb: mirrors the remote p)
   let a = 0, t = 0, v = 0, since = 0, total = 0, elapsed = 0, shake = 0, stampAge = 9, perfectSaid = false, finished = false;
   const pts = [];
-  let shown = 0, lastKey = '', stopped = false;
+  let shown = 0, lastKey = '', stopped = false, statTimer = 0;
   let remote = { a: 0, v: 0, s: [], d: 0 };
 
   function render(dt, value, label0) {
@@ -81,9 +83,12 @@ export function mountForza(ctx) {
     cells.forEach((c, i) => setText(c, pts[i] === undefined ? '–' : String(pts[i])));
     setText(totalTxt, String(pts.reduce((x, y) => x + y, 0)));
     if (speedTxt) {
-      const n = Math.floor(k.time() * 1.3);
-      setText(speedTxt, `Geschwindigkeit: ${SPEEDS[n % SPEEDS.length]}`);
-      setText(timeTxt, `Verbleibende Zeit: ${TIMES[(n * 3 + a) % TIMES.length]}`);
+      statTimer -= dt;
+      if (statTimer <= 0) {   // cosmetic only, so plain Math.random: new fake stats every 0.4-1.1 s
+        statTimer = 0.4 + Math.random() * 0.7;
+        setText(speedTxt, `Geschwindigkeit: ${SPEEDS[Math.floor(Math.random() * SPEEDS.length)]}`);
+        setText(timeTxt, `Verbleibende Zeit: ${TIMES[Math.floor(Math.random() * TIMES.length)]}`);
+      }
     }
     stampAge += dt;
     const grow = Math.min(1, stampAge / 0.18);
@@ -102,7 +107,7 @@ export function mountForza(ctx) {
   }
 
   function startAttempt() {
-    phase = 'run'; t = 0; since = 0; v = 0; stopped = false;
+    phase = 'run'; t = 0; since = 0; v = 0; stopped = false; hist.length = 0;
     stampAge = 9;
   }
 
@@ -159,6 +164,7 @@ export function mountForza(ctx) {
       t += dt * 1000;
       const c = curves[a];
       v = Math.round(c.valueAt(t) * 10) / 10;
+      hist.push([elapsed, v]); while (hist.length > 1 && elapsed - hist[0][0] > 150) hist.shift();
       if (input.pressed('confirm') || input.pressed('action')) stop(v);
       else if (t >= c.tCap) stop(CAP);
       else if (elapsed >= DURATION_MS - 400) { stop(v); finishNow(); }   // never outlive the module's durationMs
@@ -168,7 +174,7 @@ export function mountForza(ctx) {
       else if (since >= PAUSE_MS) { a++; startAttempt(); }
     }
     const c = curves[a];
-    render(dt, v, phase === 'run' ? STATUS[c.labelAt(t)] : phase === 'wait' ? STATUS.wait : stopped ? 'Download beendet.' : STATUS.wait);
+    render(dt, v, phase === 'run' ? (STATUS[c.labelAt(t)] ?? STATUS.load) : phase === 'wait' ? STATUS.wait : stopped ? 'Download beendet.' : STATUS.wait);
     progress();
   });
 
@@ -176,11 +182,14 @@ export function mountForza(ctx) {
     go() { if (phase === 'wait') { startAttempt(); input.takeFrame?.(); } },
     update(p) { if (thumb && p && typeof p === 'object') remote = { a: p.a ?? 0, v: p.v ?? 0, s: Array.isArray(p.s) ? p.s : [], d: p.d ?? 0 }; },
     botInput() {
-      if (thumb || phase !== 'run') return {};
-      const c = curves[a];
-      // inject() reaches the game about two frames late: press early by (speed x latency)
-      const speed = Math.max(0, c.valueAt(t + 100) - c.valueAt(t)) * 10;   // %/s
-      if (v + speed * (k.dt() * 2 + 0.02) >= aims[a] && ['crawl', 'over'].includes(c.labelAt(t))) return { confirm: true };   // only the final crawl is worth stopping in
+      if (thumb || phase !== 'run' || hist.length < 2) return {};
+      // reacts only to the live bar: measured speed (%/s over the last ~150 ms), no knowledge of the curve or the clock.
+      // inject() reaches the game about two frames late: press early by (speed x latency). A fast surge (> 9 %/s) is not trusted, so
+      // the bot skips bursts and fake finishes, but it can still be fooled by stutters and jump the gun or overshoot.
+      const [t0, v0] = hist[0], [t1, v1] = hist[hist.length - 1];
+      const speed = t1 > t0 ? ((v1 - v0) / (t1 - t0)) * 1000 : 0;
+      if (speed > 9) return {};
+      if (v + Math.max(0, speed) * (k.dt() * 2 + 0.02) >= aims[a] && v >= 99) return { confirm: true };
       return {};
     },
     destroy() {},   // everything hangs off root (the runner destroys it)
