@@ -1,5 +1,6 @@
 // In-board prompts for the local player: roll (+ item use, target pick, trap placement), path, star, shop. Plus the "<Name> ist dran…" label.
 // Driven only by input.onNav (keyboard + gamepad both arrive as NavEvents) and sends PlayerIntents through session.sendIntent.
+import { textOpts } from '../minigames/font.js';
 import { ITEM, ITEM_INFO, MAX_ITEMS } from '../contracts.js';
 import { makeDraw } from './draw.js';
 import { addHint } from '../minigames/hint.js';
@@ -224,7 +225,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     const name = st.seats[t.seat].profile.name;
     const msg = { roll: `${name} ist dran…`, path: `${name} sucht den Weg…`, star: `${name} überlegt, ob da ein Stern drin ist…`, shop: `${name} stöbert im Späti…` }[t.step] ?? `${name} ist dran…`;
     const o = ui.add([k.pos(W / 2, H - 52)]);
-    const f = k.formatText({ text: msg, size: 28 });
+    const f = k.formatText({ text: msg, ...textOpts(k, 28) });
     o.add([k.rect(f.width + 80, 54, { radius: 27 }), k.color(d.col(INK)), k.opacity(0.88), k.outline(5, d.col(st.seats[t.seat].profile.color)), k.anchor('center')]);
     fx.text(o, msg, 28, { line: 0 });
     return { close: () => o.destroy(), nav() {} };

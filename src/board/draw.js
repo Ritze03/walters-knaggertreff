@@ -1,4 +1,5 @@
 // Small drawing helpers over a Kaplay instance (immediate-mode shapes used by onDraw callbacks). Colours are cached by hex.
+import { textOpts as glyphs } from '../minigames/font.js';
 import { createRng } from '../contracts.js';
 
 export function makeDraw(k) {
@@ -11,7 +12,7 @@ export function makeDraw(k) {
   };
   const v = (x, y) => k.vec2(x, y);
   const texts = new Map();
-  const textOpts = (s, x, y, size, c, o) => ({ text: s, pos: v(x, y), size, color: col(c), anchor: o.anchor ?? 'center', opacity: o.a, angle: o.angle,
+  const textOpts = (s, x, y, size, c, o) => ({ text: s, ...glyphs(k, size, o.scale), pos: v(x, y), color: col(c), anchor: o.anchor ?? 'center', opacity: o.a, angle: o.angle,
     align: o.align, width: o.width, scale: o.scale,
     outline: o.line === 0 ? undefined : { width: o.line ?? Math.max(2, size / 8), color: col(o.lineColor ?? '#1e1a2e') } });
   const d = {

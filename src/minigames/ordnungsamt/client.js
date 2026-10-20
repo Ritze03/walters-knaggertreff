@@ -24,7 +24,7 @@ export function mountOrdnungsamt(ctx) {
   for (const [x, y] of [[220, 150], [1060, 150], [220, 640], [1060, 640]]) box(k, world, x, y, 90, 24, '#7a5230', { radius: 5, outline: [3, '#4d3219'] });
   for (const [x, y] of [[90, 140], [1190, 140], [90, 650], [1190, 650]]) { disc(k, world, x, y, 34, '#3f8f3f', { outline: [4, '#27632b'] }); disc(k, world, x, y, 12, '#7a5230'); }
   box(k, world, 560, 100, 160, 44, '#e8b730', { radius: 6, outline: [4, '#8a6a00'] });
-  label(k, world, 'Späti', 640, 122, { size: 26, color: '#2a2200' });
+  label(k, world, 'SPÄTI', 640, 122, { size: 26, color: '#2a2200' });
   const bands = world.add([k.pos(0, 0)]);     // van warning lanes
   const crowd = world.add([k.pos(0, 0)]);     // players
   const traffic = world.add([k.pos(0, 0)]);   // vans (above the players, they run you over)

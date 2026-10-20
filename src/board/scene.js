@@ -1,4 +1,5 @@
 // The board world: ground/decor, roads, space tiles, star, traps, tokens, camera. Pure view -- everything is driven by calls from index.js.
+import { textOpts } from '../minigames/font.js';
 import { addAvatar } from '../avatar/index.js';
 import { SCREEN } from '../contracts.js';
 import { makeDraw, shade } from './draw.js';
@@ -158,7 +159,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   const nameW = new Map();
   const pill = (name, x, y, color) => {
     let w = nameW.get(name);
-    if (w === undefined) nameW.set(name, (w = k.formatText({ text: name, size: NAME_SIZE }).width));
+    if (w === undefined) nameW.set(name, (w = k.formatText({ text: name, ...textOpts(k, NAME_SIZE) }).width));
     d.rect(x, y, w + 18, NAME_SIZE + 9, '#1e1a2e', { anchor: 'center', r: (NAME_SIZE + 9) / 2, a: 0.85, line: 2, lineColor: color });
     d.dtext(name, x, y + 1, NAME_SIZE, '#ffffff', { line: 0 });
   };
@@ -178,7 +179,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   });
 
   const widths = new Map();
-  const textW = (s, size) => { const key = `${size}|${s}`; let w = widths.get(key); if (w === undefined) widths.set(key, (w = k.formatText({ text: s, size }).width)); return w; };
+  const textW = (s, size) => { const key = `${size}|${s}`; let w = widths.get(key); if (w === undefined) widths.set(key, (w = k.formatText({ text: s, ...textOpts(k, size) }).width)); return w; };
 
   // ---------- turn arrow + step badge + prompt markers ----------
   overlay.onDraw(() => {
@@ -298,7 +299,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
     const base = typeof at === 'number' ? tokenTop(at) : at;
     const key = typeof at === 'number' ? at : 'x';
     const n = (stack[key] = ((stack[key] ?? 0) + 1) % 4);
-    const o = fxLayer.add([k.pos(base.x, base.y - 20 - n * 34), k.anchor('center'), k.scale(0.2), k.opacity(1), k.text(text, { size }), k.color(d.col(color)), k.outline(6, d.col('#1e1a2e'))]);
+    const o = fxLayer.add([k.pos(base.x, base.y - 20 - n * 34), k.anchor('center'), k.scale(0.2), k.opacity(1), k.text(text, textOpts(k, size)), k.color(d.col(color)), k.outline(6, d.col('#1e1a2e'))]);
     anim.tween(hold, (p) => {
       o.pos = k.vec2(base.x, base.y - 20 - n * 34 - rise * p);
       o.scale = k.vec2(Math.min(1, p * 6) * 1.1 + (p < 0.2 ? 0 : 0), Math.min(1, p * 6) * 1.1);
@@ -310,7 +311,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
     const out = [];
     for (let i = 0; i < n; i++) {
       const a = (Math.PI * 2 * i) / n + Math.random() * 0.5;
-      const o = fxLayer.add([k.pos(from.x, from.y), k.anchor('center'), k.opacity(1), k.rotate(0), k.text(emoji, { size: size * (0.8 + Math.random() * 0.5) })]);
+      const o = fxLayer.add([k.pos(from.x, from.y), k.anchor('center'), k.opacity(1), k.rotate(0), k.text(emoji, textOpts(k, size * (0.8 + Math.random() * 0.5)))]);
       const dest = to ? { x: to.x + (Math.random() - 0.5) * 30, y: to.y + (Math.random() - 0.5) * 30 } : { x: from.x + Math.cos(a) * spread * (0.5 + Math.random() * 0.6), y: from.y + Math.sin(a) * spread * (0.5 + Math.random() * 0.6) - 40 };
       const delay = to ? i * 0.04 : 0;
       out.push(anim.tween(dur + delay, (p) => {

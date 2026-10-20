@@ -1,5 +1,6 @@
 // Kaplay renderer for button hints (token syntax: see src/ui/glyphs.js): pad buttons as coloured letter circles, keyboard keys as
 // drawn key-caps (shapes, never "[...]": brackets are Kaplay style tags). Used by the board prompts, the intro screen and minigames.
+import { textOpts } from './font.js';
 import { parseHint, PAD_GLYPHS, GLYPH_RING, KEYCAP } from '../ui/glyphs.js';
 
 const col = (k, c) => (typeof c === 'string' ? k.rgb(c) : c);
@@ -19,12 +20,12 @@ export function addHint(k, parent, str, x, y, opts = {}) {
   const items = parseHint(str).map((p) => {
     if (p.type === 'text') {
       const text = clean(p.text.trim());
-      return text ? { ...p, text, w: k.formatText({ text, size }).width } : null;
+      return text ? { ...p, text, w: k.formatText({ text, ...textOpts(k, size) }).width } : null;
     }
     if (p.type === 'gap') return { ...p, w: size * 0.9 };
     if (p.type === 'key') {
       const label = clean(p.label);
-      return { ...p, label, w: Math.max(D, k.formatText({ text: label, size: capSize }).width + size * 0.7) };
+      return { ...p, label, w: Math.max(D, k.formatText({ text: label, ...textOpts(k, capSize) }).width + size * 0.7) };
     }
     return { ...p, w: D };
   }).filter(Boolean);
@@ -37,13 +38,13 @@ export function addHint(k, parent, str, x, y, opts = {}) {
   for (const it of items) {
     const mid = cx + it.w / 2;
     if (it.type === 'text') {
-      const comps = [k.pos(mid, 0), k.text(it.text, { size }), k.color(col(k, opts.color ?? '#ffffff')), k.anchor('center')];
+      const comps = [k.pos(mid, 0), k.text(it.text, textOpts(k, size)), k.color(col(k, opts.color ?? '#ffffff')), k.anchor('center')];
       if (opts.outline) comps.push(k.outline(opts.outline[0], col(k, opts.outline[1])));
       add(comps);
     } else if (it.type === 'key') {
       add([k.pos(mid, 2), k.rect(it.w, D, { radius: size * 0.22 }), k.color(col(k, KEYCAP.edge)), k.anchor('center')]);
       add([k.pos(mid, 0), k.rect(it.w, D - 2, { radius: size * 0.22 }), k.color(col(k, KEYCAP.fill)), k.anchor('center')]);
-      add([k.pos(mid, 0), k.text(it.label, { size: capSize }), k.color(col(k, KEYCAP.ink)), k.anchor('center')]);
+      add([k.pos(mid, 0), k.text(it.label, textOpts(k, capSize)), k.color(col(k, KEYCAP.ink)), k.anchor('center')]);
     } else if (it.type === 'pad') {
       const g = PAD_GLYPHS[it.id], r = D / 2;
       add([k.pos(mid, 0), k.circle(r + Math.max(1.5, size * 0.07)), k.color(col(k, GLYPH_RING)), k.anchor('center')]);
@@ -52,7 +53,7 @@ export function addHint(k, parent, str, x, y, opts = {}) {
         for (const [w, h] of [[r * 1.25, r * 0.42], [r * 0.42, r * 1.25]]) add([k.pos(mid, 0), k.rect(w, h, { radius: r * 0.08 }), k.color(col(k, g.ink)), k.anchor('center')]);
       } else {
         if (it.id === 'LS') add([k.pos(mid, 0), k.circle(r * 0.72), k.color(col(k, '#454852')), k.anchor('center')]);
-        add([k.pos(mid, 1), k.text(g.label, { size: Math.round(size * 0.78) }), k.color(col(k, g.ink)), k.anchor('center')]);
+        add([k.pos(mid, 1), k.text(g.label, textOpts(k, Math.round(size * 0.78))), k.color(col(k, g.ink)), k.anchor('center')]);
       }
     }
     cx += it.w + sp;

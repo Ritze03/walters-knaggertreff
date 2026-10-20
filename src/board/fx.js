@@ -1,4 +1,5 @@
 // Screen-space juice: banners, chips, dice, flashes, confetti. Everything is parented under `ui` (a child of the board root).
+import { textOpts } from '../minigames/font.js';
 import { makeDraw } from './draw.js';
 
 export function createFx({ k, ui, scene, anim, audio }) {
@@ -9,15 +10,15 @@ export function createFx({ k, ui, scene, anim, audio }) {
   /** adds styled text; returns the object */
   function text(parent, s, size, { pos = [0, 0], color = '#ffffff', ink = INK, line = 6, anchor = 'center', width, align = 'center' } = {}) {
     return parent.add([
-      k.pos(pos[0], pos[1]), k.anchor(anchor), k.text(s, { size, width, align }), k.color(d.col(color)), k.outline(line, d.col(ink)),
+      k.pos(pos[0], pos[1]), k.anchor(anchor), k.text(s, { ...textOpts(k, size), width, align }), k.color(d.col(color)), k.outline(line, d.col(ink)),
     ]);
   }
 
   /** big ribbon banner across the screen (event text, round, endspurt...). Resolves when it is gone. */
   async function banner(msg, { sub, color = '#ffb400', size = 54, hold, y = 0.3, tilt = -1.5, textColor = '#ffffff' } = {}) {
     const wrap = W - 220;
-    const f = k.formatText({ text: msg, size, width: wrap, align: 'center' });
-    const sf = sub ? k.formatText({ text: sub, size: Math.round(size * 0.5), width: wrap, align: 'center' }) : null;
+    const f = k.formatText({ text: msg, ...textOpts(k, size), width: wrap, align: 'center' });
+    const sf = sub ? k.formatText({ text: sub, ...textOpts(k, Math.round(size * 0.5)), width: wrap, align: 'center' }) : null;
     const h = f.height + (sf ? sf.height + 12 : 0) + 50;
     const c = ui.add([k.pos(W / 2, H * y), k.scale(0.2, 0.2), k.rotate(tilt)]);
     c.add([k.pos(0, 10), k.rect(W + 60, h, { radius: 0 }), k.color(0, 0, 0), k.opacity(0.35), k.anchor('center')]);
@@ -34,7 +35,7 @@ export function createFx({ k, ui, scene, anim, audio }) {
 
   /**
    * Full-screen announcement ("MINISPIEL-ZEIT!", "DUELL!"): dimmed screen, an untinted emoji pair, a huge title, a sub line and an optional
-   * gold pill (the minigame's name). Resolves when it is gone. Capital umlauts are avoided by the callers (they clip in the default font).
+   * gold pill (the minigame's name). Resolves when it is gone.
    */
   async function announce({ emoji = '🎉', title, sub, pill, color = '#ff9f1c', hold = 2.2 } = {}) {
     const wrap = W - 160;
@@ -49,7 +50,7 @@ export function createFx({ k, ui, scene, anim, audio }) {
     text(c, title, 100, { pos: [0, -70], width: wrap });
     if (sub) text(c, sub, 42, { pos: [0, 30], color: '#fff6d6', line: 5, width: wrap });
     if (pill) {
-      const f = k.formatText({ text: pill, size: 52 });
+      const f = k.formatText({ text: pill, ...textOpts(k, 52) });
       const w = Math.min(wrap, f.width + 90);
       c.add([k.pos(0, 112), k.rect(w, 82, { radius: 41 }), k.color(d.col(INK)), k.outline(6, d.col('#ffd43b')), k.anchor('center')]);
       text(c, pill, 52, { pos: [0, 114], color: '#ffd43b', ink: INK, line: 0, width: wrap });
@@ -67,7 +68,7 @@ export function createFx({ k, ui, scene, anim, audio }) {
 
   /** small pill near the top, e.g. "Anna ist dran" */
   async function chip(msg, color, hold = 1.0) {
-    const f = k.formatText({ text: msg, size: 28 });
+    const f = k.formatText({ text: msg, ...textOpts(k, 28) });
     const w = f.width + 70;
     const c = ui.add([k.pos(W / 2, -60), k.scale(1)]);
     c.add([k.rect(w, 52, { radius: 26 }), k.color(d.col(INK)), k.outline(5, d.col(color)), k.anchor('center')]);
@@ -94,7 +95,7 @@ export function createFx({ k, ui, scene, anim, audio }) {
       o.add([k.pos(8, 12), k.rect(size, size, { radius: 28 }), k.color(0, 0, 0), k.opacity(0.35), k.anchor('center')]);
       o.add([k.rect(size, size, { radius: 28 }), k.color(255, 255, 255), k.outline(9, d.col(color)), k.anchor('center')]);
       o.add([k.pos(-size / 2 + 18, -size / 2 + 18), k.circle(7), k.color(d.col(color)), k.anchor('center')]);
-      const label = o.add([k.text('?', { size: 96 }), k.color(d.col(INK)), k.anchor('center')]);
+      const label = o.add([k.text('?', textOpts(k, 96)), k.color(d.col(INK)), k.anchor('center')]);
       return { o, label, v, i };
     });
     audio.sfx('diceRoll');
@@ -117,7 +118,7 @@ export function createFx({ k, ui, scene, anim, audio }) {
     }
     await anim.tween(0.3, (p) => { for (const { o } of objs) o.scale = k.vec2(1 + 0.4 * (1 - p), 1 + 0.4 * (1 - p)); }, anim.ease.easeOutBack);
     if (values.length > 1) {
-      const sum = ui.add([k.pos(W / 2, dy + 130), k.anchor('center'), k.text(`= ${values.reduce((a, b) => a + b, 0)}`, { size: 54 }), k.color(255, 255, 255), k.outline(7, d.col(INK))]);
+      const sum = ui.add([k.pos(W / 2, dy + 130), k.anchor('center'), k.text(`= ${values.reduce((a, b) => a + b, 0)}`, textOpts(k, 54)), k.color(255, 255, 255), k.outline(7, d.col(INK))]);
       await anim.wait(0.6);
       sum.destroy();
     } else await anim.wait(0.45);
