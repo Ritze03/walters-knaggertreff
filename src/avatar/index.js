@@ -1,6 +1,11 @@
 // Goofy blob avatar (D17): everything drawn with Kaplay shapes/text. Uses only the passed `k` (global:false).
 
-const HAT_EMOJI = { cap: '🧢', cowboy: '👒', crown: '👑', tophat: '🎩' };
+// Emoji hats get their own untinted text object (color() would tint them). Per hat: [emoji, size (x r), dx (x r), dy (x r), angle (deg)].
+const HAT_EMOJI = {
+  cap: ['🧢', 1.1, 0, 0.25, 0], crown: ['👑', 1.1, 0, 0.1, 0], tophat: ['🎩', 1.1, 0, 0.15, 0],   // dy: emoji glyphs have air below
+  hotdog: ['🌭', 1.25, 0, 0.25, -6],        // lying across the top of the head
+  cucumber: ['🥒', 1.15, 0.22, 0.3, 20],    // leaning jauntily to one side
+};
 
 /**
  * @param k        kaplay instance
@@ -62,13 +67,13 @@ function addHat(k, body, hat, r, ink) {
   const top = -r * 0.92;
   const outline = k.outline(2, ink);
   if (HAT_EMOJI[hat]) {
-    body.add([k.pos(0, top), k.text(HAT_EMOJI[hat], { size: r * 1.1 }), k.anchor('bot')]);
-  } else if (hat === 'party') {
-    body.add([k.pos(0, top), k.polygon([k.vec2(-r * 0.4, 0), k.vec2(r * 0.4, 0), k.vec2(0, -r * 0.9)]), k.color(255, 90, 200), outline, k.rotate(8)]);
-    body.add([k.pos(0, top - r * 0.9), k.circle(r * 0.12), k.color(255, 230, 80), k.anchor('center')]);
-  } else if (hat === 'beanie') {
-    body.add([k.pos(0, top + r * 0.1), k.rect(r * 1.1, r * 0.5, { radius: r * 0.25 }), k.color(60, 90, 200), outline, k.anchor('bot')]);
-    body.add([k.pos(0, top - r * 0.42), k.circle(r * 0.16), k.color(255, 255, 255), outline, k.anchor('center')]);
+    const [emoji, size, dx, dy, angle] = HAT_EMOJI[hat];
+    body.add([k.pos(r * dx, top + r * dy), k.text(emoji, { size: r * size }), k.anchor('bot'), k.rotate(angle)]);
+  } else if (hat === 'cowboy') {
+    // 🤠 is a face wearing a hat: a mask window over its top half keeps only the hat (no second face on the blob)
+    const s = r * 1.5;
+    const win = body.add([k.pos(0, top + r * 0.3), k.rect(s * 1.2, s * 0.31), k.anchor('bot'), k.mask('intersect')]);
+    win.add([k.pos(0, -s * 0.31), k.text('🤠', { size: s }), k.anchor('top')]);
   } else if (hat === 'propeller') {
     body.add([k.pos(0, top + r * 0.1), k.rect(r * 0.9, r * 0.35, { radius: r * 0.17 }), k.color(230, 60, 60), outline, k.anchor('bot')]);
     const blade = body.add([k.pos(0, top - r * 0.38), k.rect(r * 1.0, r * 0.1), k.color(255, 214, 59), outline, k.anchor('center'), k.scale(1)]);

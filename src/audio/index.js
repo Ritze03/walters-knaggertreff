@@ -13,7 +13,8 @@ import { initVoice, speak, stopSpeaking } from './voice.js';
 const SFX_LEVEL = 0.45, MUSIC_LEVEL = 0.35;   // buses; music is quiet so Discord chatter stays on top
 
 let zz = null, ctx = null, master = null, sfxBus = null, player = null;
-let loading = false, armed = false, muted = null, masterVolume = 1, wanted = null;
+let loading = false, armed = false, muted = null, masterVolume = null, wanted = null;
+const DEFAULT_VOLUME = 0.7;
 const buffers = new WeakMap();   // sfx part -> AudioBuffer
 const handlers = new Set();
 const warned = new Set();
@@ -22,7 +23,7 @@ const warnOnce = (msg) => { if (!warned.has(msg)) { warned.add(msg); console.war
 const store = () => { try { return typeof window !== 'undefined' ? window.localStorage : null; } catch { return null; } };
 
 function applyGain() {
-  if (master) master.gain.setTargetAtTime(isMuted() ? 0 : masterVolume, ctx.currentTime, 0.02);
+  if (master) master.gain.setTargetAtTime(isMuted() ? 0 : getMasterVolume(), ctx.currentTime, 0.02);
 }
 
 function resume() {
@@ -44,7 +45,7 @@ function loadEngine() {
     musicBus.gain.value = MUSIC_LEVEL;
     musicBus.connect(master);
     player = createMusic(ctx, musicBus);
-    master.gain.value = isMuted() ? 0 : masterVolume;
+    master.gain.value = isMuted() ? 0 : getMasterVolume();
     resume();
     player.play(wanted);
   }).catch((e) => { console.warn('[audio] unavailable, running silent', e); });
@@ -107,7 +108,7 @@ export function say(idOrText, opts) {
   if (!text) return;
   if (!Object.hasOwn(LINES, idOrText) && /^[a-z][A-Za-z0-9]*$/.test(idOrText)) warnOnce(`unknown line id "${idOrText}"`);
   for (const h of [...handlers]) { try { h(text); } catch (e) { console.error(e); } }   // captions: always, they are the no-voice fallback
-  if (!isMuted()) speak(text, opts);
+  if (!isMuted() && getMasterVolume() > 0) speak(text, { volume: getMasterVolume(), ...opts });
 }
 
 export function onCaption(handler) {
@@ -132,9 +133,21 @@ export function toggleMuted() {
   return isMuted();
 }
 
-/** extra (not in the contract): 0..1 master volume for a future settings slider */
+/** 0..1 master volume (ui slider). Persisted in KEYS.volume; mute still wins (gain 0 while muted, volume kept for unmute). */
 export function setMasterVolume(v) {
-  masterVolume = Math.max(0, Math.min(1, v));
+  const n = Number(v);
+  masterVolume = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : DEFAULT_VOLUME;
+  try { store()?.setItem(KEYS.volume, String(masterVolume)); } catch { /* not persisted */ }
   applyGain();
+  if (masterVolume === 0) stopSpeaking();
 }
 
+export function getMasterVolume() {
+  if (masterVolume === null) {
+    let raw = null;
+    try { raw = store()?.getItem(KEYS.volume) ?? null; } catch { /* nothing stored */ }
+    const n = raw === null || raw === '' ? NaN : Number(raw);
+    masterVolume = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : DEFAULT_VOLUME;
+  }
+  return masterVolume;
+}

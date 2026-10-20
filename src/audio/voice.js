@@ -23,7 +23,7 @@ export function initVoice() {
 const rand = (a, b) => a + Math.random() * (b - a);
 
 /** Speak `text` with a comedic random pitch/rate wobble. Never queues: a still-running line is cut off (interrupt, default) or the new one is dropped. */
-export function speak(text, { rate, pitch, interrupt = true } = {}) {
+export function speak(text, { rate, pitch, volume, interrupt = true } = {}) {
   const s = synth();
   if (!s) return;
   try {
@@ -37,6 +37,7 @@ export function speak(text, { rate, pitch, interrupt = true } = {}) {
     if (voice) u.voice = voice;
     u.rate = rate ?? rand(0.95, 1.2);
     u.pitch = pitch ?? rand(0.7, 1.5);
+    if (volume !== undefined) u.volume = Math.max(0, Math.min(1, volume));
     s.speak(u);
   } catch { /* captions only */ }
 }

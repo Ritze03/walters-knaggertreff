@@ -59,7 +59,16 @@ input[readonly] { opacity: .8; }
 .blob .eye:nth-of-type(2) { right: 16%; }
 .blob .eye > i { position: absolute; left: 38%; top: 30%; width: 42%; height: 42%; border-radius: 50%; background: #1e1e28; animation: look 2.4s ease-in-out infinite; }
 .blob .mouth { position: absolute; left: 30%; right: 30%; bottom: 20%; height: 8%; border-radius: 99px; background: #1e1e28; }
-.blob .hat { position: absolute; left: 50%; top: 0; transform: translate(-50%, -62%); font-size: calc(var(--s) * .55); line-height: 1; }
+.blob .hat {
+  position: absolute; left: 50%; top: 0; line-height: 1; font-size: calc(var(--s) * var(--hs, .55));
+  transform: translate(calc(-50% + var(--hx, 0%)), var(--hy, -62%)) rotate(var(--hr, 0deg));
+}
+/* per-hat placement: the hot dog lies across the top, the cucumber leans jauntily, the cowboy shows only its hat (see .crop) */
+.blob .hat-hotdog { --hs: .62; --hy: -55%; --hr: -6deg; }
+.blob .hat-cucumber { --hs: .6; --hx: 22%; --hy: -56%; --hr: 20deg; }
+.blob .hat-cowboy { --hs: .7; --hy: -30%; }
+.crop { display: inline-block; height: .4em; overflow: hidden; vertical-align: top; line-height: 1; }
+.crop > span { display: block; }
 @keyframes bob { 50% { transform: translateY(-4%) scale(1.03, .97); } }
 @keyframes look { 50% { transform: translateX(-35%); } }
 
@@ -75,7 +84,7 @@ input[readonly] { opacity: .8; }
 .standings { margin-top: 0; }
 
 /* HUD */
-.hud { position: absolute; inset: 0 64px auto 0; padding: 8px; display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.hud { position: absolute; inset: 0 180px auto 0; padding: 8px; display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .hud-seats { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { display: flex; align-items: center; gap: 8px; padding: 14px 10px 4px 8px; border-radius: 12px; background: #000a; border: 2px solid transparent; font-size: .8rem; }
 .chip.turn { border-color: var(--accent); background: #3a2a1ccc; }
@@ -93,7 +102,20 @@ input[readonly] { opacity: .8; }
 @keyframes pulse { 50% { transform: translateX(-50%) scale(1.06); } }
 
 /* chrome */
-.mute { position: absolute; top: 8px; right: 8px; width: 44px; height: 44px; padding: 0; font-size: 1.3rem; pointer-events: auto; border-radius: 50%; z-index: 5; }
+.sound {
+  position: absolute; top: 8px; right: 8px; z-index: 5; display: flex; align-items: center; gap: 6px; pointer-events: auto;
+  padding: 0 0 0 12px; border-radius: 99px; background: #000a;
+}
+.mute { flex: none; width: 44px; height: 44px; padding: 0; font-size: 1.3rem; border-radius: 50%; }
+.volume {
+  --v: 70%; width: 96px; height: 20px; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; appearance: none; -webkit-appearance: none;
+}
+.volume::-webkit-slider-runnable-track { height: 6px; border-radius: 99px; background: linear-gradient(90deg, var(--accent) var(--v), var(--line) var(--v)); }
+.volume::-moz-range-track { height: 6px; border-radius: 99px; background: linear-gradient(90deg, var(--accent) var(--v), var(--line) var(--v)); }
+.volume::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px; border-radius: 50%; background: var(--ink); border: 2px solid #000; }
+.volume::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--ink); border: 2px solid #000; }
+.volume.off { opacity: .45; }
+.volume:focus-visible { outline: 3px solid #fff; outline-offset: 2px; border-radius: 99px; }
 .toasts { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 6; }
 .toast { padding: 8px 16px; border-radius: 99px; background: var(--accent); color: var(--accent-ink); font-weight: 700; box-shadow: 0 4px 0 #000a; animation: pop .2s ease-out; }
 @keyframes pop { from { transform: scale(.8); opacity: 0; } }

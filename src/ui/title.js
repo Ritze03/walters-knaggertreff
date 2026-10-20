@@ -1,7 +1,7 @@
 // Title screen with the profile picker and create/join. Returns { el, first }.
 import { HATS, NAME_MAX, PLAYER_COLORS, parseGameIdFromHash } from '../contracts.js';
 import { h, row } from './dom.js';
-import { blob, hatEmoji, HAT_LABEL } from './avatar.js';
+import { blob, hatGlyph, HAT_LABEL } from './avatar.js';
 
 const NAMES = ['Döner-Dieter', 'Aura-Andi', 'Pfandpaul', 'Späti-Sven', 'Kevin', 'Chantal', 'Yallah-Yusuf', 'Schnitzel', 'Bernd', 'Monte-Mo'];
 const TAGLINES = ['Das crazy.', 'Aura +1000.', 'Pfand gehört in die Kiste.', 'Monte man, yes!', 'Forza ist fertig heruntergeladen.', 'Yallah, auf geht’s!'];
@@ -11,13 +11,13 @@ export function randomProfile() {
   return { name: pick(NAMES), color: pick(PLAYER_COLORS), hat: pick(HATS) };
 }
 
-/** a stored profile if it is valid, else a random one */
+/** a stored profile if it is valid, else a random one (per field: an old hat id like 'party'/'beanie' falls back to 'none') */
 function startProfile(stored) {
   const rnd = randomProfile();
   return {
     name: typeof stored?.name === 'string' && stored.name.trim() ? stored.name.slice(0, NAME_MAX) : rnd.name,
     color: PLAYER_COLORS.includes(stored?.color) ? stored.color : rnd.color,
-    hat: HATS.includes(stored?.hat) ? stored.hat : rnd.hat,
+    hat: HATS.includes(stored?.hat) ? stored.hat : stored ? 'none' : rnd.hat,
   };
 }
 
@@ -43,7 +43,7 @@ export function buildTitle({ stored, gameId, canCreate, bot, message, toast, onC
   }));
   const hatBtns = HATS.map((hat) => h('button', {
     class: 'hatbtn', testid: `hat-${hat}`, title: HAT_LABEL[hat], 'aria-label': HAT_LABEL[hat], onclick: () => { p.hat = hat; refresh(); },
-  }, hat === 'none' ? '🚫' : hatEmoji(hat)));
+  }, hat === 'none' ? '🚫' : hatGlyph(hat)));
   const joinInput = gameId ? null : h('input', {
     testid: 'join-input', type: 'text', autocomplete: 'off', placeholder: 'Einladungslink einfügen', 'aria-label': 'Einladungslink',
   });

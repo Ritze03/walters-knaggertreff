@@ -92,7 +92,8 @@ export const ITEM_INFO = freeze({
 
 /** Avatar look. Profile.color is one of PLAYER_COLORS (core keeps colours unique per game), hat one of HATS. */
 export const PLAYER_COLORS = Object.freeze(['#ff5a5f', '#ffb400', '#8ce99a', '#4dabf7', '#b197fc', '#ff8fd0', '#38d9a9', '#ffd43b']);
-export const HATS = Object.freeze(['none', 'cap', 'cowboy', 'crown', 'tophat', 'party', 'beanie', 'propeller']);
+// 'hotdog'/'cucumber' replaced 'party'/'beanie' (old saved profiles/saves with those ids: picker falls back to a valid hat, avatars draw no hat).
+export const HATS = Object.freeze(['none', 'cap', 'cowboy', 'crown', 'tophat', 'hotdog', 'cucumber', 'propeller']);
 
 // ===== 2. Shared pure helpers  [all] =====
 
@@ -218,6 +219,7 @@ export const KEYS = freeze({
   host: (gameId, pid) => `wk:host:${gameId}${pid ? ':' + pid : ''}`,     // string playerId that created this game => "I am host of gameId"
   save: (gameId, pid) => `wk:save:${gameId}${pid ? ':' + pid : ''}`,     // core.serialize(state) string (D12); host only
   muted: 'wk:muted',                                                      // '1' | '0' (audio, global)
+  volume: 'wk:volume',                                                    // '0'..'1' master volume (audio, global; ui slider); default 0.7
 });
 
 /** Identity helpers exported by src/net/identity.js (all sync, never throw):
@@ -568,6 +570,7 @@ export const FIXED_LINES = freeze({
  *       // ALWAYS also calls the onCaption handlers (the UI shows a caption bubble, which is the no-voice fallback).
  *   onCaption(handler:(text:string) => void): () => void,
  *   setMuted(m:boolean): void, isMuted(): boolean, toggleMuted(): boolean,   // persisted in KEYS.muted; mutes sfx+music+speech immediately
+ *   setMasterVolume(v:number): void, getMasterVolume(): number,  // 0..1, persisted in KEYS.volume (default 0.7); mute wins over it
  * }} AudioApi */
 
 // ===== 10. Minigame module + runner  [minigames (implement), core (reads MINIGAMES), main (mounts runner)] =====

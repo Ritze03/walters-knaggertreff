@@ -51,9 +51,18 @@ document.head.insertAdjacentHTML('beforeend', '<link rel="icon" href="data:,">')
 const stage = document.querySelector('#app');
 const canvas = document.createElement('canvas');
 stage.append(canvas);
+// Crisp rendering: with width/height set, Kaplay draws into a FIXED framebuffer of SCREEN * pixelDensity * scale and then stretches it
+// onto the canvas. Before, that was 1280x720 (x DPR) blown up with the default "nearest" filter = blocky pixels on any big screen.
+// Now the framebuffer matches the device pixels of the screen (logical coords stay 1280x720), capped at 2x SCREEN (= 2560x1440)
+// to protect fps, and texFilter 'linear' smooths whatever scaling remains (glyph atlas, 4K monitors).
+const dpr = window.devicePixelRatio || 1;
+const pixelDensity = Math.min(2, dpr);
+// size for the screen, not just the current window, so maximising / fullscreen later stays sharp
+const fit = Math.min(Math.max(window.screen?.width || 0, window.innerWidth) / SCREEN.w, Math.max(window.screen?.height || 0, window.innerHeight) / SCREEN.h) || 1;
 const k = kaplay({
   canvas, width: SCREEN.w, height: SCREEN.h, stretch: true, letterbox: true, global: false, background: [20, 17, 15],
-  focus: false, debug: false, loadingScreen: false, pixelDensity: Math.min(2, window.devicePixelRatio || 1),
+  focus: false, debug: false, loadingScreen: false, texFilter: 'linear',
+  pixelDensity, scale: Math.max(1, Math.min(2, fit * dpr) / pixelDensity),
 });
 k.onUpdate(() => input.update());   // the ONE place that calls input.update()
 const ui = createUi({ parent: document.body, input, audio });
