@@ -90,10 +90,13 @@ function showTitle(message = '') {
       markHost(gameId, playerId, debug.pid);
       history.replaceState(null, '', `${location.pathname}${location.search}#${gameId}`);
       const full = { ...profile, playerId };
-      const initial = core.createGame({
+      let initial = core.createGame({
         gameId, hostPlayerId: playerId, hostProfile: full, seed: debug.seed ?? crypto.getRandomValues(new Uint32Array(1))[0],
         starTarget: debug.stars ?? undefined, forceMinigame: debug.mg, availableMinigames: listMinigames().map((m) => m.id),
       });
+      if (debug.coins !== null) {   // test knob ?coins=N: seatJoin takes new purses from rules.startCoins
+        initial = { ...initial, rules: { ...initial.rules, startCoins: debug.coins }, players: initial.players.map((p) => ({ ...p, coins: debug.coins })) };
+      }
       startRun({ gameId, profile, isHost: true, initial });
     },
     onJoin(profile, gameId) {

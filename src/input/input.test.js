@@ -96,3 +96,19 @@ test('onNav fires on press then repeats after delay/interval', () => {
   off(); key(t, 'keydown', 'ArrowDown'); input.update();
   assert.equal(got.filter((n) => n === 'down').length, 3);
 });
+
+test('onNav latches a tap shorter than one frame (down+up between updates), key auto-repeat adds nothing', () => {
+  setPads();
+  const { t, input } = mk();
+  const got = [];
+  input.onNav((n) => got.push(n));
+  key(t, 'keydown', 'ArrowRight'); key(t, 'keyup', 'ArrowRight');
+  key(t, 'keydown', 'Enter'); key(t, 'keyup', 'Enter');
+  input.update();
+  assert.deepEqual(got.sort(), ['confirm', 'right']);
+  input.update();
+  assert.equal(got.length, 2);
+  key(t, 'keydown', 'ArrowDown'); key(t, 'keydown', 'ArrowDown'); key(t, 'keydown', 'ArrowDown');
+  input.update();
+  assert.equal(got.filter((n) => n === 'down').length, 1);
+});

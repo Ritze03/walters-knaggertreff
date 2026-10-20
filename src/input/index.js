@@ -59,12 +59,18 @@ export function createInput({ target = globalThis.window, now = () => performanc
   let injected = null;
   const navHandlers = new Set();
   const nextRepeat = {};
+  const tapped = new Set(); // nav names pressed since the last update(), so a tap shorter than a frame still navigates
 
   const onKeyDown = (e) => {
     if (isTextField(e.target)) return;
     if (PREVENT.has(e.code) && e.preventDefault) e.preventDefault();
+    const fresh = !held.has(e.code);   // OS key auto-repeat must not count as new taps
     held.add(e.code);
     for (const a of BUTTONS) if (KEYS[a].includes(e.code)) latched[a] = true; // so a tap shorter than a frame still counts
+    if (fresh) {
+      for (const a of ['confirm', 'back']) if (KEYS[a].includes(e.code)) tapped.add(a);
+      for (const d of DIRS) if (MOVE_KEYS[d].includes(e.code)) tapped.add(d);
+    }
   };
   const onKeyUp = (e) => { if (!isTextField(e.target)) held.delete(e.code); };
   const onBlur = () => held.clear();
@@ -100,7 +106,7 @@ export function createInput({ target = globalThis.window, now = () => performanc
     // menu navigation: fire on press; directions then repeat while held (confirm/back do not repeat)
     const t = now();
     for (const n of [...DIRS, 'confirm', 'back']) {
-      if (edges[n]) {
+      if (edges[n] || tapped.has(n)) {
         emit(n);
         nextRepeat[n] = t + TIMING.NAV_REPEAT.delayMs;
       } else if (all[n] && DIRS.includes(n) && t >= nextRepeat[n]) {
@@ -108,6 +114,7 @@ export function createInput({ target = globalThis.window, now = () => performanc
         nextRepeat[n] = t + TIMING.NAV_REPEAT.intervalMs;
       }
     }
+    tapped.clear();
     prev = all;
   }
 
