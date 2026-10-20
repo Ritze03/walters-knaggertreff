@@ -120,21 +120,23 @@ export function createRng(seed) {
 
 /** Debug URL params (D19/D20). EVERY module parses via this function, never ad hoc.
  *  `?local` BroadcastChannel transport. `?bot` this tab plays itself. `?seed=N` fixed host RNG. `?mg=<id>` force minigame (invalid id -> null).
+ *  `?coins=N` start purse of every player (test knob: with a fat purse bot decisions no longer depend on minigame outcomes, so a seed replays the same board).
  *  `?stars=N` override starTarget (>=1, NOT clamped to STAR_TARGET.max). `?pid=name` storage namespace (see KEYS) so several `?local`
  *  tabs in ONE browser context (BroadcastChannel does not cross isolated Playwright contexts!) get distinct identities.
  *  @param {string} search e.g. location.search
- *  @returns {{ local:boolean, bot:boolean, seed:(number|null), mg:(string|null), stars:(number|null), pid:(string|null) }} */
+ *  @returns {{ local:boolean, bot:boolean, seed:(number|null), mg:(string|null), stars:(number|null), coins:(number|null), pid:(string|null) }} */
 export function parseDebugParams(search = '') {
   const q = new URLSearchParams(search);
   const flag = (n) => q.has(n) && !['0', 'false', 'no'].includes(q.get(n).toLowerCase());
   const int = (n) => { const v = q.get(n); return v !== null && /^-?\d+$/.test(v.trim()) ? parseInt(v, 10) : null; };
-  const seed = int('seed'), stars = int('stars'), mg = q.get('mg'), pid = q.get('pid');
+  const seed = int('seed'), stars = int('stars'), coins = int('coins'), mg = q.get('mg'), pid = q.get('pid');
   return {
     local: flag('local'),
     bot: flag('bot'),
     seed: seed === null ? null : seed >>> 0,
     mg: mg && Object.hasOwn(MINIGAMES, mg) ? mg : null,
     stars: stars !== null && stars >= 1 ? stars : null,
+    coins: coins !== null && coins >= 0 ? coins : null,
     pid: pid && /^[a-z0-9_-]{1,16}$/i.test(pid) ? pid : null,
   };
 }
