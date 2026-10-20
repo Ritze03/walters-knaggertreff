@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng, HOST_SEAT, MAX_ITEMS } from '../contracts.js';
 import { applyIntent, botIntent, registerBoard } from './index.js';
-import { started, run, edit, deepFreeze, makeBoard, lobby } from './test-fixtures.js';
+import { started, run, edit, deepFreeze, makeBoard, lobby } from './fixtures.js';
 
 const at = (s, seat, spaceId, extra = {}) => edit(s, (d) => { Object.assign(d.players[seat], { spaceId }, extra); });
 

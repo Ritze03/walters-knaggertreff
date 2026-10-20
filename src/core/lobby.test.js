@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { HOST_SEAT, PLAYER_COLORS, STAR_TARGET, STATE_VERSION, MAX_PLAYERS } from '../contracts.js';
 import { createGame, applyIntent, serialize, deserialize, resumeGame, getBoard, registerBoard } from './index.js';
 import { RULES_FOR_STATE } from './rules.js';
-import { lobby, started, profile, run, edit, deepFreeze, types, makeBoard, registerFixture } from './test-fixtures.js';
+import { lobby, started, profile, run, edit, deepFreeze, types, makeBoard, registerFixture } from './fixtures.js';
 
 test('createGame: lobby, host seat 0, rules copied, defaults', () => {
   const s = createGame({ gameId: 'g', hostPlayerId: 'p0', hostProfile: profile(0), seed: 5 });

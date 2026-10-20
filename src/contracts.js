@@ -272,6 +272,7 @@ export const KEYS = freeze({
 /** @typedef {{
  *   starPrice:number, blueCoins:number, redCoins:number, endspurtMultiplier:number,
  *   itemPrices:Object<ItemId,number>, minigameCoins:number[], duelStake:number,
+ *   startCoins:number, stealCoins:number, trapCoins:number, dieMin:number, dieMax:number,   // start purse, steal/trap amounts, die faces
  * }} Rules   -- copied from the single core constants file at createGame so ui/board can show prices without importing core internals. */
 
 /** @typedef {{
@@ -280,7 +281,9 @@ export const KEYS = freeze({
  *   rev:number,                                // monotonically increasing, see above
  *   seed:number, rng:number,                   // initial seed (informational) / CURRENT Rng.state() -- core re-creates createRng(state.rng) per call and writes it back
  *   phase:Phase,
- *   settings:{ starTarget:number, boardId:BoardId, forceMinigame:(string|null) },   // forceMinigame = ?mg (host's URL)
+ *   settings:{ starTarget:number, boardId:BoardId, forceMinigame:(string|null), availableMinigames:(string[]|null) },
+ *       // forceMinigame = ?mg (host's URL). availableMinigames = ids of minigame modules that actually exist (main.js passes listMinigames() ids);
+ *       // null = every MINIGAMES id. Set once by createGame, kept by rematch/serialize. Saves without the field behave like null.
  *   rules:Rules,
  *   seats:Seat[], players:PlayerState[],       // parallel arrays, same length, index = seat index
  *   turnOrder:number[], turnIndex:number,      // seat indices in rolling order (fixed at startGame); turn.seat === turnOrder[turnIndex]
@@ -402,14 +405,17 @@ export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'in
 
 /** `src/core/index.js` exports EXACTLY these (pure, no DOM, no Date/Math.random inside rules -- all randomness from state.rng; never mutates inputs):
  *  @typedef {{
- *    createGame(o:{ gameId:string, hostPlayerId:string, hostProfile:PlayerProfile, seed:number, starTarget?:number, boardId?:BoardId, forceMinigame?:(string|null) }): GameState,
- *        // phase 'lobby', seat 0 = host, rev 0, rules from core constants, defaults starTarget STAR_TARGET.default, boardId 'spaeti'
+ *    createGame(o:{ gameId:string, hostPlayerId:string, hostProfile:PlayerProfile, seed:number, starTarget?:number, boardId?:BoardId, forceMinigame?:(string|null), availableMinigames?:string[] }): GameState,
+ *        // phase 'lobby', seat 0 = host, rev 0, rules from core constants, defaults starTarget STAR_TARGET.default, boardId 'spaeti'.
+ *        // availableMinigames: ids not in MINIGAMES are dropped; missing/empty => all of MINIGAMES (stored as settings.availableMinigames = null).
  *    applyIntent(state:GameState, actor:number, intent:Intent): ApplyResult,   // actor = seat index or HOST_SEAT
  *    botIntent(state:GameState, seat:number): (PlayerIntent|null),
  *        // the intent a sensible bot would send NOW for `seat` (roll, random path, buy star when affordable, sometimes buy/use items, ready); null if that seat has nothing to do.
  *        // Pure (derives its own randomness from state.rng WITHOUT advancing it). Used by: ?bot tabs for their own seat; the host driver for absent seats; tools/sim.mjs.
- *    pickMinigame(o:{ seats:number[], purpose:('round'|'duel'), forceId:(string|null), recent:string[], rng:Rng }): MinigameDescriptor,
- *        // table-driven from MINIGAMES. duel => solo kind, exactly 2 seats. team only if isTeamGameAllowed(seats.length) (teams shuffled, equal size). forceId honoured only if legal for this count. avoids `recent`.
+ *    pickMinigame(o:{ seats:number[], purpose:('round'|'duel'), forceId:(string|null), recent:string[], rng:Rng, allowed?:string[] }): (MinigameDescriptor|null),
+ *        // table-driven from MINIGAMES. duel => solo kind, exactly 2 seats. team only if isTeamGameAllowed(seats.length) (teams shuffled, equal size). forceId honoured only if legal for this count AND in `allowed`. avoids `recent`.
+ *        // `allowed` (core passes state.settings.availableMinigames) restricts candidates; null/missing/empty = no restriction. Fallbacks: forget `recent` (oldest first, finally all);
+ *        // if nothing allowed is legal for this count/purpose it returns null and core skips that minigame (round: next round starts; duel: no duelStart, turn goes on).
  *    isTeamGameAllowed(playerCount:number): boolean,                         // same function as exported here
  *    serialize(state:GameState): string,                                     // JSON.stringify(state)
  *    deserialize(json:string): (GameState|null),                             // null on bad JSON / wrong version

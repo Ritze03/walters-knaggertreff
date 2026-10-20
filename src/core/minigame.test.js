@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng, MINIGAMES, MINIGAME_IDS, HOST_SEAT } from '../contracts.js';
-import { applyIntent, pickMinigame, isTeamGameAllowed, registerBoard } from './index.js';
-import { started, run, edit, rollAs, types, makeBoard } from './test-fixtures.js';
+import { applyIntent, pickMinigame, isTeamGameAllowed, registerBoard, createGame, serialize, deserialize } from './index.js';
+import { started, run, edit, rollAs, types, makeBoard } from './fixtures.js';
 
 const seatsOf = (n) => Array.from({ length: n }, (_, i) => i);
 const pick = (n, o = {}) => pickMinigame({ seats: seatsOf(n), purpose: 'round', forceId: null, recent: [], rng: createRng(7), ...o });
@@ -289,4 +289,92 @@ test('victory through an event effect also ends the game (and Endspurt does not 
   assert.deepEqual(types(r.events), ['diceRolled', 'moved', 'eventSpace', 'victory']);
   assert.equal(r.state.phase, 'victory');
   assert.equal(r.state.winner, 0);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// availability allowlist (phase A: only forza + ordnungsamt exist)
+
+const PHASE_A = ['forza', 'ordnungsamt'];
+
+test('allowed: only forza + ordnungsamt with 3 and 4 players over 200 picks (rounds and duels)', () => {
+  for (const n of [3, 4]) {
+    const rng = createRng(n);
+    const seen = new Set();
+    let recent = [];
+    for (let i = 0; i < 200; i++) {
+      const m = pickMinigame({ seats: seatsOf(n), purpose: 'round', forceId: null, recent, rng, allowed: PHASE_A });
+      assert.ok(PHASE_A.includes(m.id), m.id);
+      seen.add(m.id);
+      recent = [...recent, m.id].slice(-6);   // everything allowed is "recent": recent must be ignored, not fail
+    }
+    assert.deepEqual([...seen].sort(), PHASE_A);
+  }
+  const rng = createRng(1);
+  for (let i = 0; i < 200; i++) {
+    const m = pickMinigame({ seats: [0, 2], purpose: 'duel', forceId: null, recent: ['forza'], rng, allowed: PHASE_A });
+    assert.equal(m.id, 'forza');   // duel => solo only
+  }
+});
+
+test('allowed: empty/null means unrestricted; forceId must also be allowed', () => {
+  const rng = createRng(5);
+  const ids = new Set();
+  for (let i = 0; i < 300; i++) ids.add(pickMinigame({ seats: seatsOf(4), purpose: 'round', forceId: null, recent: [], rng, allowed: [] }).id);
+  assert.ok(ids.size > 2);
+  assert.ok(pickMinigame({ seats: seatsOf(4), purpose: 'round', forceId: null, recent: [], rng, allowed: null }));
+  assert.equal(pick(3, { forceId: 'ordnungsamt', allowed: PHASE_A }).id, 'ordnungsamt');
+  for (let i = 0; i < 30; i++) assert.ok(PHASE_A.includes(pick(3, { forceId: 'aura', allowed: PHASE_A, rng: createRng(i) }).id));
+  assert.equal(pick(3, { forceId: 'aura', allowed: ['aura', 'forza'] }).id, 'aura');
+});
+
+test('allowed: nothing playable for the count/purpose => null (no throw)', () => {
+  assert.equal(pick(3, { allowed: ['tauziehen'] }), null);          // team game, 3 players
+  assert.equal(pick(4, { allowed: ['bogus'] }), null);              // unknown ids never match
+  assert.equal(pickMinigame({ seats: [0, 1], purpose: 'duel', forceId: null, recent: [], rng: createRng(1), allowed: ['ordnungsamt', 'tauziehen'] }), null);   // no solo game
+  assert.ok(pick(4, { allowed: ['tauziehen'] }));
+});
+
+test('createGame availableMinigames: normalised, kept by serialize and rematch', () => {
+  const mk = (o) => createGame({ gameId: 'g', hostPlayerId: 'p0', hostProfile: { playerId: 'p0', name: 'A', color: '#ff5a5f', hat: 'none' }, seed: 1, ...o });
+  assert.equal(mk({}).settings.availableMinigames, null);
+  assert.equal(mk({ availableMinigames: [] }).settings.availableMinigames, null);
+  assert.equal(mk({ availableMinigames: ['nope'] }).settings.availableMinigames, null);
+  assert.deepEqual(mk({ availableMinigames: ['forza', 'nope', 'ordnungsamt', 'forza'] }).settings.availableMinigames, PHASE_A);
+  const s = started(3, { availableMinigames: PHASE_A });
+  assert.deepEqual(deserialize(serialize(s)).settings.availableMinigames, PHASE_A);
+  const v = edit(s, (d) => { d.phase = 'victory'; d.winner = 0; d.turn = null; });
+  assert.deepEqual(run(v, 0, { type: 'rematch' }).state.settings.availableMinigames, PHASE_A);
+});
+
+test('engine uses the allowlist for round minigames and duels', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const s = toRoundMinigame(started(3, { availableMinigames: PHASE_A, seed }));
+    assert.ok(PHASE_A.includes(s.minigame.id));
+    const d = rollAs(edit(started(3, { availableMinigames: PHASE_A, seed }), (x) => { x.players[1].spaceId = 's5'; }), 5);
+    assert.equal(d.state.minigame.id, 'forza');
+  }
+});
+
+test('engine: no playable round minigame => the round minigame is skipped cleanly', () => {
+  const s = started(3, { availableMinigames: ['tauziehen'] });   // team only, 3 players => nothing playable
+  const r1 = rollAs(rollAs(s, 1).state, 2);
+  const r3 = rollAs(r1.state, 3);
+  assert.equal(r3.state.phase, 'boardTurn');
+  assert.equal(r3.state.round, 2);
+  assert.equal(r3.state.minigame, null);
+  assert.deepEqual(types(r3.events).slice(-3), ['coinsChanged', 'roundStarted', 'turnStarted']);
+  assert.deepEqual(r3.state.mgHistory, []);
+});
+
+test('engine: no playable solo minigame => no duel, the turn simply continues', () => {
+  const s = edit(started(3, { availableMinigames: ['ordnungsamt'] }), (d) => { d.players[1].spaceId = 's5'; });
+  const r = rollAs(s, 5);
+  assert.equal(r.state.phase, 'boardTurn');
+  assert.ok(!types(r.events).includes('duelStart'));
+  assert.ok(!types(r.events).includes('minigameStart'));
+  assert.equal(r.state.turn.seat, 1);
+  // goldenDoener is not lost either
+  const g = rollAs(edit(s, (d) => { d.turn.extraRolls = 1; }), 5);
+  assert.equal(g.state.turn.seat, 0);
+  assert.equal(g.state.turn.step, 'roll');
 });

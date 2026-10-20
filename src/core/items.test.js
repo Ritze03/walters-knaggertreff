@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyIntent } from './index.js';
-import { started, run, edit, forceDice, rollAs, types } from './test-fixtures.js';
+import { started, run, edit, forceDice, rollAs, types } from './fixtures.js';
 
 const give = (s, seat, items, extra = {}) => edit(s, (d) => { Object.assign(d.players[seat], { items }, extra); });
 const at = (s, seat, spaceId, extra = {}) => edit(s, (d) => { Object.assign(d.players[seat], { spaceId }, extra); });

@@ -62,7 +62,8 @@ function newSeat(st, playerId, profile, isHost, isBot) {
 // ---------------------------------------------------------------------------------------------------------------------
 // public: createGame / save / load
 
-export function createGame({ gameId, hostPlayerId, hostProfile, seed, starTarget, boardId, forceMinigame = null }) {
+export function createGame({ gameId, hostPlayerId, hostProfile, seed, starTarget, boardId, forceMinigame = null, availableMinigames = null }) {
+  const avail = Array.isArray(availableMinigames) ? [...new Set(availableMinigames.filter((id) => Object.hasOwn(MINIGAMES, id)))] : [];
   const st = {
     version: STATE_VERSION, gameId, rev: 0, seed: seed >>> 0, rng: createRng(seed).state(),
     phase: 'lobby',
@@ -70,6 +71,7 @@ export function createGame({ gameId, hostPlayerId, hostProfile, seed, starTarget
       starTarget: Number.isInteger(starTarget) && starTarget >= 1 ? starTarget : STAR_TARGET.default,
       boardId: Object.hasOwn(BOARD_ID, boardId) ? boardId : 'spaeti',
       forceMinigame: forceMinigame && Object.hasOwn(MINIGAMES, forceMinigame) ? forceMinigame : null,
+      availableMinigames: avail.length ? avail : null,   // null = every MINIGAMES id
     },
     rules: clone(RULES_FOR_STATE),
     seats: [], players: [], turnOrder: [], turnIndex: 0, round: 0, turn: null, starSpaceId: null, traps: {},
@@ -491,12 +493,21 @@ function endRound(c) {
   st.turn = null;
   const seats = connectedSeats(st);
   if (seats.length < 2) return startRound(c, st.round + 1);   // nobody to play with: skip the minigame
-  startMinigame(c, 'round', seats);
+  const mg = pickFor(c, 'round', seats);
+  if (!mg) return startRound(c, st.round + 1);   // no playable minigame: skip it
+  enterMinigame(c, mg);
 }
 
-function startMinigame(c, purpose, seats) {
+/** picks a minigame honouring ?mg and the availability allowlist; null when nothing is playable (no state change, no events) */
+function pickFor(c, purpose, seats) {
   const { st } = c;
-  const mg = pickMinigame({ seats, purpose, forceId: st.settings.forceMinigame, recent: st.mgHistory, rng: c.rng });
+  return pickMinigame({
+    seats, purpose, forceId: st.settings.forceMinigame, recent: st.mgHistory, rng: c.rng, allowed: st.settings.availableMinigames,
+  });
+}
+
+function enterMinigame(c, mg) {
+  const { st } = c;
   st.mgHistory.push(mg.id);
   while (st.mgHistory.length > MG_HISTORY_LEN) st.mgHistory.shift();
   st.minigame = mg;
@@ -612,10 +623,13 @@ function land(c) {
     const others = st.players.flatMap((q, i) => (i !== seat && st.seats[i].connected && q.spaceId === p.spaceId ? [i] : []));
     if (others.length) {
       const opp = c.rng.pick(others);
-      emit(c, { type: 'duelStart', seats: [seat, opp] });
-      log(c, null, `Duell: ${nameOf(c, seat)} gegen ${nameOf(c, opp)}!`);
-      startMinigame(c, 'duel', [seat, opp]);
-      return;
+      const mg = pickFor(c, 'duel', [seat, opp]);
+      if (mg) {   // no playable solo minigame => no duel
+        emit(c, { type: 'duelStart', seats: [seat, opp] });
+        log(c, null, `Duell: ${nameOf(c, seat)} gegen ${nameOf(c, opp)}!`);
+        enterMinigame(c, mg);
+        return;
+      }
     }
   }
   finishAction(c);

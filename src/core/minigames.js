@@ -10,15 +10,18 @@ function legal(id, n, purpose) {
 
 /**
  * Picks a minigame and builds its descriptor (ready:[], results:null, coinDelta:null).
- * duel => solo kind, exactly 2 seats. team kinds only for an even count >= 4. forceId wins when legal.
- * `recent` is avoided; if that would leave nothing, the oldest entries are forgotten first.
+ * duel => solo kind, exactly 2 seats. team kinds only for an even count >= 4. forceId wins when legal AND allowed.
+ * `allowed` (optional, null/empty = every MINIGAMES id) restricts the candidates to the modules that exist.
+ * `recent` is avoided; if that would leave nothing, the oldest entries are forgotten first (finally: ignored).
+ * Returns null when nothing allowed is legal for this count/purpose (caller skips the minigame).
  */
-export function pickMinigame({ seats, purpose, forceId, recent = [], rng }) {
+export function pickMinigame({ seats, purpose, forceId, recent = [], rng, allowed = null }) {
   const sorted = [...seats].sort((a, b) => a - b);
   const n = sorted.length;
   if (purpose === 'duel' && n !== 2) throw new Error('duel needs exactly 2 seats');
   if (n < 2) throw new Error('minigame needs at least 2 seats');
-  const all = MINIGAME_IDS.filter((id) => legal(id, n, purpose));
+  const all = MINIGAME_IDS.filter((id) => legal(id, n, purpose) && (!allowed?.length || allowed.includes(id)));
+  if (!all.length) return null;
   let id = forceId && all.includes(forceId) ? forceId : null;
   if (!id) {
     let cands = all;
@@ -26,7 +29,7 @@ export function pickMinigame({ seats, purpose, forceId, recent = [], rng }) {
       cands = all.filter((c) => !recent.slice(from).includes(c));
       if (cands.length) break;
     }
-    id = rng.pick(cands.length ? cands : all);
+    id = rng.pick(cands);
   }
   const kind = MINIGAMES[id].kind;
   let teams = null;
