@@ -149,26 +149,21 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
       scene.setMarkers(opts.map((id, i) => { const p = scene.spacePos(id); return { x: p.x, y: p.y, sel: i === selIdx, arrow: true, color: i === selIdx ? '#ffe14d' : '#ffffff', label: cards[i].name }; }));
     };
     scene.cam.fit([here, ...opts.map(scene.spacePos)], 200, 0.9);
-    let menu;
-    menu = openMenu({
+    const menu = openMenu({
       title: 'Welchen Weg?', cards, hint: '← → ↑ ↓ wählen    Enter / A bestätigen', sel: 0, onSel: mark,
       onPick: (i) => send({ type: 'choosePath', spaceId: opts[i] }),
     });
     prompts.menu = menu;
+    // left/up = previous card, right/down = next card in turn.options order. Clamped (no wrap) so with two roads
+    // Left always means the first and Right the second, whichever is highlighted.
     const baseNav = menu.nav;
     menu.nav = (n) => {
-      const v = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[n];
-      if (!v) return baseNav(n);
-      // prefer the option that lies in the pressed direction; otherwise cycle
-      let best = -1, bd = 0.35;
-      dirs.forEach((dv, i) => { const dot = dv.x * v[0] + dv.y * v[1]; if (i !== menu.sel && dot > bd) { bd = dot; best = i; } });
-      if (best < 0) {   // nothing lies that way: only cycle when the current option itself points that way (several options in one direction)
-        const cur = dirs[menu.sel];
-        if (cur.x * v[0] + cur.y * v[1] <= bd) return;
-        best = menu.sel + 1;
-      }
+      const step = { left: -1, up: -1, right: 1, down: 1 }[n];
+      if (!step) return baseNav(n);
+      const to = Math.max(0, Math.min(opts.length - 1, menu.sel + step));
+      if (to === menu.sel) return;
       audio.sfx('menuMove');
-      menu.setSel(best);
+      menu.setSel(to);
     };
     const baseClose = menu.close;
     menu.close = () => { baseClose(); scene.setMarkers([]); };
