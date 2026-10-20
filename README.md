@@ -1,6 +1,6 @@
 # Walters Knaggertreff
 
-Ein bekloppt-liebevolles Brettspiel im Mario-Party-Stil voller deutscher Memes. Läuft komplett im Browser, 2-6 Spieler, jeder an seinem eigenen PC.
+Ein bekloppt-liebevolles Brettspiel im Partyspiel-Stil voller deutscher Memes. Läuft komplett im Browser, 2-6 Spieler, jeder an seinem eigenen PC.
 
 ## Jetzt spielen
 
@@ -30,7 +30,7 @@ Hängt der Beitritt bei "Verbinde mit dem Spiel…"? Manche Netze (strenge Firme
 
 - Jede Runde würfelt jeder reihum einen **W10** (1-10) und zieht.
 - Felder: **blau** = +3 Pfand (Münzen), **rot** = -3, **Eventfelder** = brettspezifisches Chaos, dazu **Shops**.
-- Alle Zahlen sind von Mario Party abgeguckt: Jeder startet mit **10 Münzen**, der **Stern** kostet **20 Münzen**. Es gibt immer nur einen Stern auf dem Brett. Kaufen kannst du ihn beim Vorbeigehen oder Draufstehen, danach springt er an eine neue Stelle.
+- Die Spielwirtschaft ist klassisch gehalten: Jeder startet mit **10 Münzen**, der **Stern** kostet **20 Münzen**. Es gibt immer nur einen Stern auf dem Brett. Kaufen kannst du ihn beim Vorbeigehen oder Draufstehen, danach springt er an eine neue Stelle.
 - **Items** (max. 3) gibt es im Shop: Doppelwürfel (10), Goldener Döner (12, nochmal würfeln), Münzklau (15, klaut bis zu 10 Münzen) und eine Falle (10, klaut bis zu 8 Münzen), die du auf ein Feld legst.
 - Landest du auf dem Feld eines anderen, gibt es ein **Duell** (1-gegen-1-Minispiel um 10 Münzen). Duelle gibt es erst ab Runde 2, nicht auf dem Startfeld und höchstens **eines pro Runde**.
 - Nach jeder Runde steigt ein **Minispiel** für alle: Platz 1 bekommt +10, Platz 2 +5, Platz 3 +2 Münzen. Geht ein Minispiel kaputt (fehlt, stürzt ab, Zeit um), gibt es keine Münzen.
