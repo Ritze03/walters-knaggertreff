@@ -2,6 +2,7 @@
    every size in this file is in rem, so text stays sharp (real layout, no transform scaling). */
 html { font-size: clamp(15px, min(1.25vw, 2.22vh), 30px); }
 :root {
+  color-scheme: dark;   /* the UI is dark already: tells Chrome not to auto-darken (forced dark mode) and to draw scrollbars / sliders dark */
   --bg: #14110f; --ink: #f2e8d5; --card: #231d19; --line: #4a3d33; --accent: #ffb400; --accent-ink: #1c1408; --bad: #ff5a5f; --good: #8ce99a;
 }
 [hidden] { display: none !important; }

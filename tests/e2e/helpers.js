@@ -36,9 +36,16 @@ export function collectErrors(page, bucket, label) {
   page.on('console', (m) => { if (m.type() === 'error' && keep(m.text())) bucket.push(`${label} console.error: ${m.text()}`); });
 }
 
+/** WK_SLOW=<rate> (or 1 = 4x) throttles the CPU of every page via CDP, to stress timing-sensitive specs the way a slow headed run does. */
+const SLOW = process.env.WK_SLOW ? (Number(process.env.WK_SLOW) > 1 ? Number(process.env.WK_SLOW) : 4) : 0;
+
 /** Opens a page in `context`, wired for event tracking and error collection. */
 export async function openPage(context, errors, label) {
   const page = await context.newPage();
+  if (SLOW) {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: SLOW });
+  }
   await page.addInitScript(TRACK_EVENTS);
   collectErrors(page, errors, label);
   return page;

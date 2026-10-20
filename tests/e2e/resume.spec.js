@@ -14,23 +14,47 @@ test('closing the host mid-match shows host-gone; reopening its URL resumes the 
 
   for (const c of [c1, c2]) await expect(c.getByTestId('host-gone')).toBeVisible({ timeout: 30_000 });
 
-  // with the host gone nothing moves any more: this is exactly the last state the host saved and broadcast
+  // With the host gone nothing moves any more. The authoritative "last state" is the host's SAVE (same origin, so a client page can read it),
+  // not what a client happens to show: the host saves BEFORE it broadcasts, and a broadcast sent right before the page died may never
+  // arrive, so a client can be a rev (or a few) behind.
+  const saveOf = () => c1.evaluate(() => {
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith('wk:save:') && k.endsWith(':h'));
+    return keys.length === 1 ? JSON.parse(localStorage.getItem(keys[0])) : keys;
+  });
+  const saved = await saveOf();
+  expect(Array.isArray(saved)).toBe(false);
+  expect(saved.round).toBeGreaterThanOrEqual(2);
+
   const last = await state(c1);
   await c1.waitForTimeout(1500);
   expect((await state(c1)).rev).toBe(last.rev);
-  expect(last.round).toBeGreaterThanOrEqual(2);
+  expect(await saveOf()).toEqual(saved);   // nothing writes the save any more
+  // a client never runs ahead of the save, and when it did catch up it shows exactly the saved state
+  expect(last.rev).toBeLessThanOrEqual(saved.rev);
+  if (last.rev === saved.rev) expect(last.players).toEqual(saved.players);
 
+  // The resumed host is a live game again: its bot / the autoplay of the absent seats start moving ~0.7-1.2 s after it appears. So the
+  // resumed state must not be read from the page later on; record the very first save it writes (startRun stores the resumed state at once).
   const host2 = await openPage(context, m.errors, 'host2');
+  await host2.addInitScript(() => {
+    window.__firstSave = null;
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      if (window.__firstSave === null && k.startsWith('wk:save:')) window.__firstSave = v;
+      return set.call(this, k, v);
+    };
+  });
   await host2.goto(hostUrl);
   await host2.getByTestId('hud-coins-0').waitFor({ timeout: 60_000 });   // straight into the game: no title screen, no create
 
-  const resumed = await state(host2);
-  expect(resumed.gameId).toBe(last.gameId);
-  expect(resumed.round).toBe(last.round);
-  expect(resumed.seats.map((s) => s.playerId)).toEqual(last.seats.map((s) => s.playerId));
-  expect(resumed.players.map((p) => ({ coins: p.coins, stars: p.stars, spaceId: p.spaceId, items: p.items })))
-    .toEqual(last.players.map((p) => ({ coins: p.coins, stars: p.stars, spaceId: p.spaceId, items: p.items })));
-  expect(resumed.rev).toBeGreaterThan(last.rev);   // resumeGame bumps the rev, so clients accept it
+  const resumed = JSON.parse(await host2.evaluate(() => window.__firstSave));
+  const brief = (st) => st.players.map((p) => ({ coins: p.coins, stars: p.stars, spaceId: p.spaceId, items: p.items }));
+  expect(resumed.gameId).toBe(saved.gameId);
+  expect(resumed.round).toBe(saved.round);
+  expect(resumed.seats.map((s) => s.playerId)).toEqual(saved.seats.map((s) => s.playerId));
+  expect(brief(resumed)).toEqual(brief(saved));
+  expect(resumed.turn).toEqual(saved.turn);   // incl. a fork prompt (step 'path', options, stepsLeft)
+  expect(resumed.rev).toBe(saved.rev + 1);   // resumeGame bumps the rev, so clients accept it
 
   for (const c of [c1, c2]) await expect(c.getByTestId('host-gone')).toBeHidden({ timeout: 60_000 });
 

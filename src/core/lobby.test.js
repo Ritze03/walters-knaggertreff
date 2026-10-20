@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { HOST_SEAT, PLAYER_COLORS, STAR_TARGET, STATE_VERSION, MAX_PLAYERS } from '../contracts.js';
 import { createGame, applyIntent, serialize, deserialize, resumeGame, getBoard, registerBoard, botIntent } from './index.js';
 import { RULES_FOR_STATE } from './rules.js';
-import { lobby, started, profile, run, edit, deepFreeze, types, makeBoard, registerFixture, startAll } from './fixtures.js';
+import { lobby, started, profile, run, edit, deepFreeze, types, makeBoard, registerFixture, startAll, forceDice } from './fixtures.js';
 
 test('createGame: lobby, host seat 0, rules copied, defaults', () => {
   const s = createGame({ gameId: 'g', hostPlayerId: 'p0', hostProfile: profile(0), seed: 5 });
@@ -265,6 +265,39 @@ test('resumeGame: host connected, others offline, minigame restarts at intro, lo
   assert.equal(l.seats.length, 1);
   // a non-host playerId still keeps one connected seat (fallback seat 0) -- host is always seat 0
   assert.equal(resumeGame(started(2), 'p0').seats[0].connected, true);
+});
+
+test('resume at a fork: serialize -> deserialize -> resumeGame keeps the pending path prompt, and the walk continues', () => {
+  for (const seat of [0, 1]) {   // 0 = the host's own turn, 1 = an absent seat that the host autoplays after resume
+    // s5 -> s6 is the fork on the fixture board; a 3 stops there with 2 steps left
+    const forced = forceDice(edit(started(3), (d) => { d.players[seat].spaceId = 's5'; d.turn.seat = seat; }), [3]);
+    const atFork = run(forced, seat, { type: 'roll' }).state;
+    assert.equal(atFork.turn.step, 'path');
+    const before = atFork.turn;
+    assert.equal(before.stepsLeft, 2);
+    assert.deepEqual(before.options, ['s7', 's12']);
+
+    const r = resumeGame(deserialize(serialize(atFork)), 'p0');
+    assert.equal(r.phase, 'boardTurn');
+    assert.deepEqual(r.turn, before);   // step, seat, stepsLeft, options: nothing reset
+    assert.deepEqual(r.players.map((p) => p.spaceId), atFork.players.map((p) => p.spaceId));   // positions kept (the fork space itself is s6)
+    assert.equal(r.players[seat].spaceId, 's6');
+    assert.equal(r.rev, atFork.rev + 1);
+
+    // a wrong choice is still refused, the right one continues with the remaining steps
+    assert.equal(applyIntent(r, seat, { type: 'choosePath', spaceId: 's9' }).error, 'invalid');
+    const go = applyIntent(r, seat, { type: 'choosePath', spaceId: 's7' });
+    assert.equal(go.error, null);
+    assert.deepEqual(go.events[0], { type: 'moved', seat, path: ['s7', 's8'] });
+
+    // the host's bot / autoplay (core.botIntent on the resumed state) answers the prompt with a legal choosePath
+    const bot = botIntent(r, seat);
+    assert.equal(bot.type, 'choosePath');
+    assert.ok(before.options.includes(bot.spaceId));
+    const next = applyIntent(r, seat, bot);
+    assert.equal(next.error, null);
+    assert.notEqual(next.state.turn.step, 'path');
+  }
 });
 
 test('applyIntent: errors return the input state untouched, success bumps rev', () => {
