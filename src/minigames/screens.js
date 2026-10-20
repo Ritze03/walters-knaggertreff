@@ -1,6 +1,7 @@
 // The runner's own full-screen views: instructions ("Bereit!") and results. Kaplay shapes/text only, built under a parent object.
 import { SCREEN, TIMING, rankOf } from '../contracts.js';
 import { box, label, setText } from './draw.js';
+import { addHint } from './hint.js';
 
 const INK = '#1b2a49';
 const bg = (k, parent) => {
@@ -17,7 +18,7 @@ export function buildIntro({ k, parent, mod, desc, state, participant, addAvatar
   label(k, parent, mod.instructions, SCREEN.w / 2, 200, { size: 26, width: 940, align: 'center', anchor: 'top', color: '#f2e8d5', lineSpacing: 8 });
   box(k, parent, 190, 372, 900, 52 + mod.controlHints.length * 36, '#000000', { radius: 14, opacity: 0.35, outline: [3, '#ffd43b'] });
   label(k, parent, 'Steuerung', SCREEN.w / 2, 392, { size: 22, color: '#ffd43b' });
-  mod.controlHints.forEach((h, i) => label(k, parent, h, SCREEN.w / 2, 432 + i * 36, { size: 24, color: '#ffffff', width: 860, align: 'center' }));
+  mod.controlHints.forEach((h, i) => addHint(k, parent, h, SCREEN.w / 2, 432 + i * 36, { size: 24 }));   // tokens like {A} {key:Enter}: src/ui/glyphs.js
 
   const seats = desc.seats;
   const gap = Math.min(190, 1100 / Math.max(1, seats.length));
@@ -28,7 +29,8 @@ export function buildIntro({ k, parent, mod, desc, state, participant, addAvatar
     return label(k, parent, '…', x, 632, { size: 20, color: '#aaaaaa' });
   });
   const prompt = label(k, parent, '', SCREEN.w / 2, 686, { size: 30, color: '#ffffff', outline: [5, INK] });
-  const timer = label(k, parent, '', SCREEN.w - 24, 28, { size: 20, anchor: 'right', color: '#aaaaaa' });
+  const readyHint = addHint(k, parent, '{key:Enter} / {key:Leertaste} / {A} Bereit!', SCREEN.w / 2, 686, { size: 30, outline: [5, INK] });
+  const timer = label(k, parent, '', 24, 28, { size: 20, anchor: 'left', color: '#aaaaaa' });   // top-left: the DOM sound control covers the top-right corner
 
   return {
     update(st, msLeft, selfReady) {
@@ -39,8 +41,11 @@ export function buildIntro({ k, parent, mod, desc, state, participant, addAvatar
         status[i].color = k.rgb(!online ? '#777777' : ready.includes(s) ? '#8ce99a' : '#aaaaaa');
       });
       const pulse = 0.65 + 0.35 * Math.abs(Math.sin(k.time() * 4));
-      prompt.opacity = participant && !selfReady ? pulse : 1;
-      setText(prompt, !participant ? '👀 Du schaust diesmal nur zu' : selfReady ? 'Warte auf die anderen…' : 'Enter / Leertaste / A: Bereit!');
+      const waiting = participant && !selfReady;
+      readyHint.hidden = !waiting;
+      prompt.hidden = waiting;
+      if (waiting) readyHint.setOpacity(pulse);
+      setText(prompt, !participant ? '👀 Du schaust diesmal nur zu' : 'Warte auf die anderen…');
       setText(timer, msLeft > 0 ? `Start in ${Math.ceil(msLeft / 1000)} s` : '');
     },
   };

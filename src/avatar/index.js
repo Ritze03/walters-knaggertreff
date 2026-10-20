@@ -5,6 +5,7 @@ const HAT_EMOJI = {
   cap: ['🧢', 1.1, 0, 0.25, 0], crown: ['👑', 1.1, 0, 0.1, 0], tophat: ['🎩', 1.1, 0, 0.15, 0],   // dy: emoji glyphs have air below
   hotdog: ['🌭', 1.25, 0, 0.25, -6],        // lying across the top of the head
   cucumber: ['🥒', 1.15, 0.22, 0.3, 20],    // leaning jauntily to one side
+  propeller: ['🚁', 1.1, 0, 0.22, 0],       // same glyph as the DOM picker; the old shape blade (scale.x = cos t) flickered into a thin cross
 };
 
 /**
@@ -35,7 +36,7 @@ export function addAvatar(k, parent, profile, { size = 48, showName = false } = 
   // grin
   body.add([k.pos(0, r * 0.38), k.rect(r * 0.5, r * 0.14, { radius: r * 0.07 }), k.color(ink), k.anchor('center')]);
 
-  addHat(k, body, profile.hat, r, ink);
+  addHat(k, body, profile.hat, r);
 
   if (showName) {
     av.add([k.pos(0, r + 4), k.text(profile.name ?? '', { size: Math.max(12, size * 0.32) }), k.color(255, 255, 255), k.outline(3, ink), k.anchor('top')]);
@@ -63,9 +64,8 @@ export function addAvatar(k, parent, profile, { size = 48, showName = false } = 
   return av;
 }
 
-function addHat(k, body, hat, r, ink) {
+function addHat(k, body, hat, r) {
   const top = -r * 0.92;
-  const outline = k.outline(2, ink);
   if (HAT_EMOJI[hat]) {
     const [emoji, size, dx, dy, angle] = HAT_EMOJI[hat];
     body.add([k.pos(r * dx, top + r * dy), k.text(emoji, { size: r * size }), k.anchor('bot'), k.rotate(angle)]);
@@ -74,10 +74,6 @@ function addHat(k, body, hat, r, ink) {
     const s = r * 1.5;
     const win = body.add([k.pos(0, top + r * 0.3), k.rect(s * 1.2, s * 0.31), k.anchor('bot'), k.mask('intersect')]);
     win.add([k.pos(0, -s * 0.31), k.text('🤠', { size: s }), k.anchor('top')]);
-  } else if (hat === 'propeller') {
-    body.add([k.pos(0, top + r * 0.1), k.rect(r * 0.9, r * 0.35, { radius: r * 0.17 }), k.color(230, 60, 60), outline, k.anchor('bot')]);
-    const blade = body.add([k.pos(0, top - r * 0.38), k.rect(r * 1.0, r * 0.1), k.color(255, 214, 59), outline, k.anchor('center'), k.scale(1)]);
-    blade.onUpdate(() => { blade.scale = k.vec2(Math.cos(k.time() * 20), 1); });
   }
   // 'none': bare blob
 }

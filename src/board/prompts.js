@@ -2,6 +2,10 @@
 // Driven only by input.onNav (keyboard + gamepad both arrive as NavEvents) and sends PlayerIntents through session.sendIntent.
 import { ITEM, ITEM_INFO, MAX_ITEMS } from '../contracts.js';
 import { makeDraw } from './draw.js';
+import { addHint } from '../minigames/hint.js';
+import { HINT } from '../ui/glyphs.js';
+
+const PICK = `${HINT.move} wählen`;
 
 const INK = '#2a2340';
 const CARD_W = 184, CARD_H = 130, GAP = 14;
@@ -21,7 +25,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     root.add([k.pos(0, 0), k.rect(Math.max(totalW + 70, 640), 270, { radius: 28 }), k.color(d.col(INK)), k.opacity(0.9), k.outline(5, d.col('#ffffff')), k.anchor('center')]);
     fx.text(root, title, 36, { pos: [0, -100], line: 6 });
     const detail = fx.text(root, '', 22, { pos: [0, 88], color: '#fff2c4', line: 4, width: Math.max(totalW, 600) });
-    fx.text(root, hint, 18, { pos: [0, 116], color: '#b8b0d8', line: 3, width: Math.max(totalW, 600) });
+    addHint(k, root, hint, 0, 112, { size: 19, color: '#d4cdf0' });
     const objs = cards.map((c, i) => {
       const x = -totalW / 2 + CARD_W / 2 + i * (CARD_W + GAP);
       const o = root.add([k.pos(x, -8), k.scale(1), k.rotate(0)]);
@@ -76,7 +80,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     }
     prompts.menu = openMenu({
       title: t.extraRolls > 0 ? 'Du bist dran! (Döner-Wurf wartet)' : 'Du bist dran!', cards, sel,
-      hint: me.items.length ? '← → wählen    Enter / A bestätigen' : 'Enter / Leertaste / A zum Würfeln',
+      hint: me.items.length ? `${PICK}   ${HINT.confirm} bestätigen` : '{key:Enter} / {key:Leertaste} / {A} Würfeln',
       onPick: (i) => {
         const c = cards[i];
         if (!c.item) return send({ type: 'roll' });
@@ -95,7 +99,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
       detail: st.players[s].coins <= 0 ? 'Der hat nichts zu klauen.' : `Klau ${st.seats[s].profile.name} bis zu ${st.rules.stealCoins} Pfand.`, seat: s,
     }));
     prompts.menu = openMenu({
-      title: '🪙 Wen beklauen?', cards, hint: '← → wählen    Enter bestätigen    Esc zurück',
+      title: '🪙 Wen beklauen?', cards, hint: `${PICK}   ${HINT.confirm} bestätigen   ${HINT.back} zurück`,
       sel: Math.max(0, cards.findIndex((c) => !c.disabled)),
       onPick: (i) => send({ type: 'useItem', item: ITEM.steal, targetSeat: cards[i].seat }),
       onBack: () => { prompts.menu.close(); rollMenu(st, seat, cardIndexOf(st, seat, ITEM.steal)); },
@@ -132,8 +136,8 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     };
     // small hint panel
     const hintObj = ui.add([k.pos(W / 2, H - 70)]);
-    hintObj.add([k.rect(780, 70, { radius: 24 }), k.color(d.col(INK)), k.opacity(0.9), k.outline(5, d.col('#ffffff')), k.anchor('center')]);
-    fx.text(hintObj, '🪤 Falle legen: ← → Feld wählen · ↑ ↓ springen · Enter legen · Esc zurück', 18, { line: 3, width: 760 });
+    const trapHint = addHint(k, hintObj, `Falle legen:  ${HINT.move} Feld   {key:↑↓} springen   ${HINT.confirm} legen   ${HINT.back} zurück`, 0, 0, { size: 19 });
+    hintObj.add([k.z(-1), k.rect(trapHint.width + 60, 64, { radius: 24 }), k.color(d.col(INK)), k.opacity(0.9), k.outline(5, d.col('#ffffff')), k.anchor('center')]);
     h.close = () => { h.closed = true; hintObj.destroy(); scene.setMarkers([]); scene.cam.follow(st.turn.seat); };
     prompts.menu = h;
   }
@@ -150,7 +154,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     };
     scene.cam.fit([here, ...opts.map(scene.spacePos)], 200, 0.9);
     const menu = openMenu({
-      title: 'Welchen Weg?', cards, hint: '← → ↑ ↓ wählen    Enter / A bestätigen', sel: 0, onSel: mark,
+      title: 'Welchen Weg?', cards, hint: `${PICK}   ${HINT.confirm} bestätigen`, sel: 0, onSel: mark,
       onPick: (i) => send({ type: 'choosePath', spaceId: opts[i] }),
     });
     prompts.menu = menu;
@@ -174,7 +178,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     const sp = scene.spacePos(st.players[seat].spaceId);
     scene.cam.look(sp.x, sp.y + 40, 0.95);
     prompts.menu = openMenu({
-      title: '⭐ Hier ist ein Stern!', sel: 0, hint: '← → wählen    Enter / A bestätigen    Esc = Nein',
+      title: '⭐ Hier ist ein Stern!', sel: 0, hint: `${PICK}   ${HINT.confirm} bestätigen   ${HINT.back} Nein`,
       cards: [
         { emoji: '⭐', name: 'Kaufen!', sub: `${price} 🍾`, detail: `Du hast ${coins} 🍾. Danach bleiben ${coins - price}.` },
         { emoji: '🙅', name: 'Nein danke', detail: 'Du läufst weiter und hebst dir das Geld auf.' },
@@ -196,7 +200,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     const sp = scene.spacePos(me.spaceId);
     scene.cam.look(sp.x, sp.y + 40, 0.95);
     prompts.menu = openMenu({
-      title: '🏪 Willkommen im Späti!', cards, sel: Math.max(0, cards.findIndex((c) => !c.disabled)), hint: '← → wählen    Enter / A kaufen    Esc = Raus',
+      title: '🏪 Willkommen im Späti!', cards, sel: Math.max(0, cards.findIndex((c) => !c.disabled)), hint: `${PICK}   ${HINT.confirm} kaufen   ${HINT.back} raus`,
       onPick: (i) => send({ type: 'buyItem', item: cards[i].item ?? null }),
       onBack: () => send({ type: 'buyItem', item: null }),
     });

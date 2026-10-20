@@ -6,7 +6,7 @@ export default {
   id: 'forza',
   name: 'Forza lädt herunter',
   instructions: 'Forza Horizon lädt herunter – und der Balken lügt, hängt und springt zurück. Stoppe ihn so nah wie möglich an 100\u00a0%. Drüber ist die Datei beschädigt! Du hast drei Versuche.',
-  controlHints: ['Enter / Leertaste / A: Download stoppen'],
+  controlHints: ['{key:Enter} / {key:Leertaste} / {A} Download stoppen'],
   durationMs: DURATION_MS,
   clientMount: mountForza,
 };

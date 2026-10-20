@@ -12,6 +12,13 @@ const TILE = {
 };
 const FOLLOW_ZOOM = 0.8;
 const TOKEN_SIZE = 54;
+const NAME_SIZE = 17;
+/** token offsets for 2..4 players on one space: a small fan/grid, the lower ones drawn in front */
+const FAN = {
+  2: [[-30, 0], [30, 0]],
+  3: [[-31, 12], [31, 12], [0, -20]],
+  4: [[-31, -22], [31, -22], [-31, 16], [31, 16]],
+};
 
 export function createScene({ k, root, board, anim, decorBuild }) {
   const W = k.width?.() || SCREEN.w, H = k.height?.() || SCREEN.h;
@@ -26,6 +33,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   const tiles = world.add([k.pos(0, 0)]);
   const props = world.add([k.pos(0, 0)]);   // star + traps
   const tokenLayer = world.add([k.pos(0, 0)]);
+  const nameLayer = world.add([k.pos(0, 0)]);   // name pills above every token (drawn after them, so never hidden)
   const overlay = world.add([k.pos(0, 0)]);  // markers, turn arrow, step badge
   const fxLayer = world.add([k.pos(0, 0)]);
 
@@ -99,12 +107,14 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   // ---------- tokens ----------
   const tokens = [];
   const profileColor = {};
+  const names = {};
   function ensureTokens(seats) {
     for (const seat of seats) {
       if (tokens[seat.index]) continue;
       profileColor[seat.index] = seat.profile.color;
+      names[seat.index] = String(seat.profile.name ?? '').replace(/[[\]]/g, '');   // [ ] are Kaplay style tags
       const tk = tokenLayer.add([k.pos(0, 0), k.scale(1), k.rotate(0)]);
-      const av = addAvatar(k, tk, seat.profile, { size: TOKEN_SIZE, showName: true });
+      const av = addAvatar(k, tk, seat.profile, { size: TOKEN_SIZE });
       tokens[seat.index] = { seat: seat.index, tk, av, pos: { x: 0, y: 0 }, off: { x: 0, y: 0 }, offT: { x: 0, y: 0 }, lift: 0, spaceId: null, pop: 1, spin: 0, front: false };
     }
   }
@@ -133,13 +143,39 @@ export function createScene({ k, root, board, anim, decorBuild }) {
     for (const t of tokens) if (t) { if (!bySpace.has(t.spaceId)) bySpace.set(t.spaceId, []); bySpace.get(t.spaceId).push(t); }
     for (const list of bySpace.values()) {
       list.forEach((t, i) => {
+        const fan = FAN[list.length];
+        if (fan) { t.offT = { x: fan[i][0], y: fan[i][1] }; return; }
         if (list.length === 1) { t.offT = { x: 0, y: 0 }; return; }
-        const a = -Math.PI / 2 + (i * 2 * Math.PI) / list.length + 0.4;
-        const r = list.length === 2 ? 30 : 38;
-        t.offT = { x: Math.cos(a) * r, y: Math.sin(a) * r * 0.6 };
+        const a = -Math.PI / 2 + (i * 2 * Math.PI) / list.length + 0.4;   // more than 4 (not in the rules): a ring
+        t.offT = { x: Math.cos(a) * 40, y: Math.sin(a) * 24 };
       });
     }
   }
+
+  // ---------- name pills ----------
+  // A lone token gets its name right under it; tokens sharing a space list their names in a column under the space, so the names of a
+  // stack never overlap each other or hide under the other avatars / the white start disc.
+  const nameW = new Map();
+  const pill = (name, x, y, color) => {
+    let w = nameW.get(name);
+    if (w === undefined) nameW.set(name, (w = k.formatText({ text: name, size: NAME_SIZE }).width));
+    d.rect(x, y, w + 18, NAME_SIZE + 9, '#1e1a2e', { anchor: 'center', r: (NAME_SIZE + 9) / 2, a: 0.85, line: 2, lineColor: color });
+    d.dtext(name, x, y + 1, NAME_SIZE, '#ffffff', { line: 0 });
+  };
+  nameLayer.onDraw(() => {
+    const groups = new Map();
+    for (const t of tokens) {
+      if (!t) continue;
+      if (t.front || t.lift > 0) { pill(names[t.seat], t.pos.x + t.off.x, t.pos.y + t.off.y + 14 - t.lift, profileColor[t.seat]); continue; }
+      if (!groups.has(t.spaceId)) groups.set(t.spaceId, []);
+      groups.get(t.spaceId).push(t);
+    }
+    for (const list of groups.values()) {
+      if (list.length === 1) { const t = list[0]; pill(names[t.seat], t.pos.x + t.off.x, t.pos.y + t.off.y + 14, profileColor[t.seat]); continue; }
+      const p = list[0].pos;
+      list.forEach((t, i) => pill(names[t.seat], p.x, p.y + 44 + i * (NAME_SIZE + 12), profileColor[t.seat]));
+    }
+  });
 
   // ---------- turn arrow + step badge + prompt markers ----------
   overlay.onDraw(() => {

@@ -6,6 +6,7 @@ import { buildTitle } from './title.js';
 import { buildLobby } from './lobby.js';
 import { buildVictory } from './victory.js';
 import { renderHud } from './hud.js';
+import { hintBar } from './hints.js';
 
 export function createUi({ parent, input, audio }) {
   const root = h('div', { id: 'ui' });
@@ -84,7 +85,7 @@ export function createUi({ parent, input, audio }) {
       const leave = h('button', { testid: 'leave', onclick: onLeave }, 'Abbrechen');
       setPanel('connecting', {
         first: leave,
-        el: h('div', { class: 'card', testid: 'connecting' }, h('h2', null, text), h('div', { 'data-row': '' }, leave)),
+        el: h('div', { class: 'card', testid: 'connecting' }, h('h2', null, text), h('div', { 'data-row': '', class: 'actions' }, leave), hintBar('{key:Enter} / {A} abbrechen')),
       });
     },
     showLobby(o) {

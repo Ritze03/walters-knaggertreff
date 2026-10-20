@@ -16,6 +16,6 @@ export const hatGlyph = (hat) => (CROPPED.has(hat) ? h('span', { class: 'crop' }
 export function blob(profile, size = 40) {
   const eye = () => h('i', { class: 'eye' }, h('i'));
   const hat = HAT_EMOJI[profile.hat] ? profile.hat : 'none';   // unknown (old) hat ids draw a bare blob
-  return h('span', { class: 'blob', style: `--s:${size}px;--c:${profile.color}` },
+  return h('span', { class: 'blob', style: `--s:${size / 16}rem;--c:${profile.color}` },
     eye(), eye(), h('b', { class: 'mouth' }), h('span', { class: `hat hat-${hat}` }, hatGlyph(hat)));
 }

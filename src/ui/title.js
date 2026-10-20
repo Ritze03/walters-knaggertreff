@@ -2,6 +2,7 @@
 import { HATS, NAME_MAX, PLAYER_COLORS, parseGameIdFromHash } from '../contracts.js';
 import { h, row } from './dom.js';
 import { blob, hatGlyph, HAT_LABEL } from './avatar.js';
+import { menuHints } from './hints.js';
 
 const NAMES = ['Döner-Dieter', 'Aura-Andi', 'Pfandpaul', 'Späti-Sven', 'Kevin', 'Chantal', 'Yallah-Yusuf', 'Schnitzel', 'Bernd', 'Monte-Mo'];
 const TAGLINES = ['Das crazy.', 'Aura +1000.', 'Pfand gehört in die Kiste.', 'Monte man, yes!', 'Forza ist fertig heruntergeladen.', 'Yallah, auf geht’s!'];
@@ -84,6 +85,7 @@ export function buildTitle({ stored, gameId, canCreate, bot, message, toast, onC
     joinInput && row({ class: 'field' }, joinInput),
     actions,
     h('p', { class: 'message', testid: 'title-message', role: 'alert' }, message || (gameId ? 'Du wurdest eingeladen.' : '')),
+    menuHints(),
   );
   refresh();
 

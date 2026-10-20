@@ -109,7 +109,7 @@ export default function buildDecor({ k, back, board, anim }) {
     }
     for (const b of bottles) d.text('🍾', b.x, b.y, b.s, '#fff', { angle: b.a, line: 0, a: 0.8 });
     sign(d, 'Karl-Marx-Allee', 2020, 760, 90);
-    sign(d, 'Kastanienallee', 150, 700, -90);
+    sign(d, 'Kastanienallee', 150, 930, -90);   // low enough that it never sits under the HUD strip when the camera hugs the bottom edge
     sign(d, 'Hauptstraße', 560, 1320, 0);
   }
 

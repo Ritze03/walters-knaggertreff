@@ -40,9 +40,9 @@ export function createFx({ k, ui, scene, anim, audio }) {
     c.add([k.rect(w, 52, { radius: 26 }), k.color(d.col(INK)), k.outline(5, d.col(color)), k.anchor('center')]);
     c.add([k.pos(-w / 2 + 28, 0), k.circle(11), k.color(d.col(color)), k.anchor('center')]);
     text(c, msg, 28, { pos: [14, 1], line: 0 });
-    await anim.tween(0.3, (p) => { c.pos = k.vec2(W / 2, -60 + 110 * p); }, anim.ease.easeOutBack);
+    await anim.tween(0.3, (p) => { c.pos = k.vec2(W / 2, -60 + 180 * p); }, anim.ease.easeOutBack);   // ends at y=120: below the DOM HUD strip
     await anim.wait(hold);
-    await anim.tween(0.25, (p) => { c.pos = k.vec2(W / 2, 50 - 110 * p); }, anim.ease.easeInQuad);
+    await anim.tween(0.25, (p) => { c.pos = k.vec2(W / 2, 120 - 180 * p); }, anim.ease.easeInQuad);
     c.destroy();
   }
 

@@ -2,6 +2,7 @@
 import { MIN_PLAYERS, STAR_TARGET } from '../contracts.js';
 import { h, row } from './dom.js';
 import { blob } from './avatar.js';
+import { menuHints } from './hints.js';
 
 /**
  * @param o.isHost    this tab hosts the game
@@ -50,6 +51,7 @@ export function buildLobby({ state, selfSeat, isHost, inviteLink, boards, send, 
     h('div', { class: 'field' }, 'Brett', row({ class: 'tiles', testid: 'board-select' }, boardBtns)),
     row({ class: 'actions' }, isHost && start, h('button', { testid: 'leave', onclick: onLeave }, 'Verlassen')),
     hint,
+    menuHints(),
   );
 
   function update(s) {

@@ -1,6 +1,6 @@
 // Ordnungsamt-Flucht: Kaplay client. Draws the latest host snapshots (interpolated); the rules live in sim.js.
 import { createRng } from '../../contracts.js';
-import { box, disc, label, ease, setText } from '../draw.js';
+import { box, disc, label, ease, setText, addHint } from '../draw.js';
 import { ARENA, C, DURATION_MS, botFrame } from './sim.js';
 
 const BUBBLE = 'Ordnungsamt! Ausweis bitte!';
@@ -33,7 +33,7 @@ export function mountOrdnungsamt(ctx) {
   const banner = label(k, hud, '', 640, 330, { size: 74, color: '#ffffff', outline: [8, '#c0392b'], opacity: 0 });
   const bannerSub = label(k, hud, '', 640, 395, { size: 30, color: '#ffffff', outline: [5, '#1b2a49'], opacity: 0 });
   const timerTxt = label(k, hud, '', 640, 706, { size: 26, color: '#ffffff', outline: [4, '#1b2a49'] });
-  if (isPlayer) label(k, hud, 'E / Shift / X: Rempeln', 20, 706, { size: 20, anchor: 'left', color: '#ffffff', outline: [4, '#1b2a49'] });
+  if (isPlayer) addHint(k, hud, '{key:E} / {key:Shift} / {X} Rempeln', 20, 704, { size: 20, anchor: 'left', outline: [4, '#1b2a49'] });
 
   // ---- players ----
   const crew = new Map();   // seat -> {seat, av, x, y, mark, bar, chip, hearts, ghost, puffAt}

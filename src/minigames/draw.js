@@ -39,3 +39,6 @@ export const ease = (dt, speed) => 1 - Math.exp(-dt * speed);
 
 /** assigns text only when it changed (re-laying out text every frame is wasteful) */
 export const setText = (obj, str) => { if (obj.text !== str) obj.text = str; };
+
+/** Button hints with Xbox-style glyphs and key-caps: addHint(k, parent, '{key:Enter} / {A} Stoppen', x, y, opts). Token syntax: src/ui/glyphs.js */
+export { addHint } from './hint.js';

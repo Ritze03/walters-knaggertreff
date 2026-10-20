@@ -1,6 +1,7 @@
 // Victory panel: winner, final standings, host-only rematch. Returns { el, first }.
 import { h, row } from './dom.js';
 import { blob } from './avatar.js';
+import { menuHints } from './hints.js';
 
 export function buildVictory({ state, isHost, send, onTitle }) {
   const winner = state.seats[state.winner] ?? state.seats[0];
@@ -22,6 +23,7 @@ export function buildVictory({ state, isHost, send, onTitle }) {
     })),
     row({ class: 'actions' }, isHost && rematch, back),
     !isHost && h('p', { class: 'message' }, 'Der Host entscheidet, ob es eine Revanche gibt.'),
+    menuHints(),
   );
   return { el, first: isHost ? rematch : back };
 }
