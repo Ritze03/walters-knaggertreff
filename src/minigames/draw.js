@@ -1,4 +1,5 @@
 // Tiny Kaplay drawing helpers shared by the runner and the minigames (optional for minigame authors). Always go through the passed `k`.
+import { textOpts } from './font.js';
 
 /** '#rrggbb' -> Kaplay Color (Color objects pass through) */
 export const colorOf = (k, c) => (typeof c === 'string' ? k.rgb(c) : c);
@@ -21,7 +22,7 @@ export function disc(k, parent, x, y, r, color, opts = {}) {
 /** Text child. NOTE: Kaplay reads "[tag]…[/tag]" as styled text, so never put square brackets in texts.
  *  opts: {size=24, color='#fff', anchor='center', width, align, lineSpacing, outline:[width,color], opacity, angle} */
 export function label(k, parent, str, x, y, opts = {}) {
-  const t = { size: opts.size ?? 24 };
+  const t = textOpts(k, opts.size ?? 24);
   if (opts.width) t.width = opts.width;
   if (opts.align) t.align = opts.align;
   if (opts.lineSpacing) t.lineSpacing = opts.lineSpacing;
@@ -38,7 +39,7 @@ export function label(k, parent, str, x, y, opts = {}) {
  */
 export function bubble(k, parent, str, opts = {}) {
   const size = opts.size ?? 17, pad = opts.pad ?? 10, tail = opts.gap ?? 14, line = opts.line ?? 3;
-  const fmt = k.formatText({ text: str, size, ...(opts.maxWidth ? { width: opts.maxWidth, align: 'center' } : {}) });
+  const fmt = k.formatText({ text: str, ...textOpts(k, size), ...(opts.maxWidth ? { width: opts.maxWidth, align: 'center' } : {}) });
   const w = Math.ceil(fmt.width) + pad * 2, h = Math.ceil(fmt.height) + pad * 2;
   const obj = parent.add([k.pos(0, 0)]);
   const tailObj = obj.add([k.pos(0, h / 2 - 1), k.polygon([k.vec2(-9, 0), k.vec2(9, 0), k.vec2(0, tail)]), k.color(colorOf(k, opts.outline ?? '#1b2a49'))]);

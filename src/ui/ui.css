@@ -70,10 +70,11 @@ input[readonly] { opacity: .8; }
 /* per-hat placement: the hot dog lies across the top, the cucumber leans jauntily, the cowboy shows only its hat (see .crop) */
 .blob .hat-hotdog { --hs: .62; --hy: -55%; --hr: -6deg; }
 .blob .hat-cucumber { --hs: .6; --hx: 22%; --hy: -56%; --hr: 20deg; }
-.blob .hat-cowboy { --hs: .7; --hy: -30%; }
-.crop { display: inline-block; height: .4em; overflow: hidden; vertical-align: top; line-height: 1; }
-.crop > span { display: block; }
-.hatbtn .crop { transform: translateY(0.14em); }   /* the visible hat sits in the top of the 0.4em window: nudge it to the button centre */
+.blob .hat-cowboy { --hs: .7; --hy: -42%; }
+/* colour emoji ink rises ~0.1em above a line-height:1 box, so the window starts .12em above the glyph's line box (padding) or the crown is cut */
+.crop { display: inline-block; height: .52em; overflow: hidden; vertical-align: top; line-height: 1; }
+.crop > span { display: block; padding-top: .12em; }
+.hatbtn .crop { transform: translateY(0.02em); }   /* the visible hat sits in the top of the window: nudge it to the button centre */
 @keyframes bob { 50% { transform: translateY(-4%) scale(1.03, .97); } }
 @keyframes look { 50% { transform: translateX(-35%); } }
 

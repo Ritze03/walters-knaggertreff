@@ -1,4 +1,5 @@
 // Goofy blob avatar (D17): everything drawn with Kaplay shapes/text. Uses only the passed `k` (global:false).
+import { textOpts } from '../minigames/font.js';
 
 // Emoji hats get their own untinted text object (color() would tint them). Per hat: [emoji, size (x r), dx (x r), dy (x r), angle (deg)].
 const HAT_EMOJI = {
@@ -39,7 +40,7 @@ export function addAvatar(k, parent, profile, { size = 48, showName = false } = 
   addHat(k, body, profile.hat, r);
 
   if (showName) {
-    av.add([k.pos(0, r + 4), k.text(profile.name ?? '', { size: Math.max(12, size * 0.32) }), k.color(255, 255, 255), k.outline(3, ink), k.anchor('top')]);
+    av.add([k.pos(0, r + 4), k.text(profile.name ?? '', textOpts(k, Math.max(12, size * 0.32))), k.color(255, 255, 255), k.outline(3, ink), k.anchor('top')]);
   }
 
   av.onUpdate(() => {
@@ -68,12 +69,13 @@ function addHat(k, body, hat, r) {
   const top = -r * 0.92;
   if (HAT_EMOJI[hat]) {
     const [emoji, size, dx, dy, angle] = HAT_EMOJI[hat];
-    body.add([k.pos(r * dx, top + r * dy), k.text(emoji, { size: r * size }), k.anchor('bot'), k.rotate(angle)]);
+    body.add([k.pos(r * dx, top + r * dy), k.text(emoji, textOpts(k, r * size)), k.anchor('bot'), k.rotate(angle)]);
   } else if (hat === 'cowboy') {
-    // 🤠 is a face wearing a hat: a mask window over its top half keeps only the hat (no second face on the blob)
+    // 🤠 is a face wearing a hat: a mask window over its top half keeps only the hat (no second face on the blob). The window reaches
+    // 0.2 em above the text box because the crown's ink rises above it.
     const s = r * 1.5;
-    const win = body.add([k.pos(0, top + r * 0.3), k.rect(s * 1.2, s * 0.31), k.anchor('bot'), k.mask('intersect')]);
-    win.add([k.pos(0, -s * 0.31), k.text('🤠', { size: s }), k.anchor('top')]);
+    const win = body.add([k.pos(0, top + r * 0.3), k.rect(s * 1.2, s * 0.51), k.anchor('bot'), k.mask('intersect')]);
+    win.add([k.pos(0, -s * 0.31), k.text('🤠', textOpts(k, s)), k.anchor('top')]);
   }
   // 'none': bare blob
 }
