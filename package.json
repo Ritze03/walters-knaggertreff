@@ -1,0 +1,20 @@
+{
+  "name": "walters-knaggertreff",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "kaplay": "3001.0.19",
+    "trystero": "0.26.0",
+    "zzfx": "1.4.0"
+  },
+  "devDependencies": {
+    "vite": "8.3.4"
+  }
+}
