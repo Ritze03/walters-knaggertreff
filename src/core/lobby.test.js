@@ -18,7 +18,7 @@ test('createGame: lobby, host seat 0, rules copied, defaults', () => {
   assert.equal(s.settings.boardId, 'spaeti');
   assert.equal(s.settings.forceMinigame, null);
   assert.deepEqual(s.rules, RULES_FOR_STATE);
-  assert.equal(s.rules.starPrice, 10);
+  assert.equal(s.rules.starPrice, 20);
   assert.equal(s.rng, 5);
   JSON.parse(JSON.stringify(s));
 });

@@ -29,8 +29,12 @@ test('determinism: same seed + same intents -> identical state and events', () =
     for (let i = 0; i < 6; i++) {
       const r = run(s, s.turn.seat, { type: 'roll' });
       s = r.state; all.push(...r.events);
-      if (s.turn?.step === 'star') s = run(s, s.turn.seat, { type: 'buyStar', accept: true }).state;
-      if (s.turn?.step === 'path') s = run(s, s.turn.seat, { type: 'choosePath', spaceId: s.turn.options[0] }).state;
+      while (s.phase === 'boardTurn' && s.turn.step !== 'roll') {   // prompts mid-walk: star, fork, shop
+        const { step, seat, options } = s.turn;
+        s = step === 'star' ? run(s, seat, { type: 'buyStar', accept: true }).state
+          : step === 'path' ? run(s, seat, { type: 'choosePath', spaceId: options[0] }).state
+            : run(s, seat, { type: 'buyItem', item: 'trap' }).state;
+      }
       if (s.phase !== 'boardTurn') break;
     }
     return JSON.stringify([s, all]);
@@ -76,14 +80,14 @@ test('blue +3, red -3 (never below 0), events in order, turn passes on', () => {
   assert.deepEqual(b.events, [
     { type: 'diceRolled', seat: 0, value: 1, dice: [1] },
     { type: 'moved', seat: 0, path: ['s1'] },
-    { type: 'coinsChanged', seat: 0, delta: 3, total: 8, reason: 'space' },
+    { type: 'coinsChanged', seat: 0, delta: 3, total: 13, reason: 'space' },
     { type: 'turnStarted', seat: 1 },
   ]);
   assert.equal(b.state.turn.seat, 1);
   assert.equal(b.state.players[0].spaceId, 's1');
 
-  const r = rollAs(s, 3);   // s3 red, 5 coins
-  assert.equal(r.state.players[0].coins, 2);
+  const r = rollAs(s, 3);   // s3 red, 10 coins
+  assert.equal(r.state.players[0].coins, 7);
   const low = rollAs(edit(s, (d) => { d.players[0].coins = 1; }), 3);
   assert.deepEqual(low.events.find((e) => e.type === 'coinsChanged'), { type: 'coinsChanged', seat: 0, delta: -1, total: 0, reason: 'space' });
   const zero = rollAs(edit(s, (d) => { d.players[0].coins = 0; }), 3);
@@ -100,7 +104,7 @@ test('movement spans multiple spaces and wraps around the loop', () => {
 
 test('Endspurt doubles blue and red', () => {
   const s = edit(started(3), (d) => { d.endspurt = true; });
-  assert.equal(rollAs(s, 1).state.players[0].coins, 5 + 6);
+  assert.equal(rollAs(s, 1).state.players[0].coins, 10 + 6);
   assert.equal(rollAs(edit(s, (d) => { d.players[0].coins = 20; }), 3).state.players[0].coins, 20 - 6);
   assert.equal(rollAs(edit(s, (d) => { d.players[0].coins = 4; }), 3).state.players[0].coins, 0);
 });
@@ -137,7 +141,7 @@ test('event space: coins handler, eventSpace payload', () => {
   const gain = ev.events.find((x) => x.type === 'coinsChanged');
   assert.equal(gain.reason, 'event');
   assert.ok(gain.delta >= 3 && gain.delta <= 5);
-  assert.equal(ev.state.players[0].coins, 5 + gain.delta);
+  assert.equal(ev.state.players[0].coins, 10 + gain.delta);
 });
 
 test('event space: moveTo teleports with no landing effect and no duel at the destination', () => {
@@ -149,12 +153,12 @@ test('event space: moveTo teleports with no landing effect and no duel at the de
   assert.equal(r.events[2].lineId, 'schienenersatz');
   assert.equal(r.events[2].sfx, 'whoosh');
   assert.equal(r.state.players[0].spaceId, 's1');
-  assert.equal(r.state.players[0].coins, 5);   // s1 is blue but a teleport has no landing effect
+  assert.equal(r.state.players[0].coins, 10);   // s1 is blue but a teleport has no landing effect
   assert.equal(r.state.phase, 'boardTurn');
 });
 
 test('star: offered when passing (affordable), buy moves the star elsewhere and the walk continues', () => {
-  let s = starAt(at(started(3), 0, 's0', { coins: 10 }), 's2');
+  let s = starAt(at(started(3), 0, 's0', { coins: 25 }), 's2');
   const r = rollAs(s, 5);
   assert.equal(r.state.turn.step, 'star');
   assert.equal(r.state.turn.stepsLeft, 3);
@@ -162,39 +166,39 @@ test('star: offered when passing (affordable), buy moves the star elsewhere and 
   assert.equal(applyIntent(r.state, 1, { type: 'buyStar', accept: true }).error, 'notYourTurn');
   const b = run(r.state, 0, { type: 'buyStar', accept: true });
   assert.deepEqual(types(b.events), ['coinsChanged', 'starBought', 'moved', 'coinsChanged', 'turnStarted']);
-  assert.deepEqual(b.events[0], { type: 'coinsChanged', seat: 0, delta: -10, total: 0, reason: 'star' });
-  assert.deepEqual(b.events[1], { type: 'starBought', seat: 0, price: 10, total: 1, newStarSpaceId: 's18' });
+  assert.deepEqual(b.events[0], { type: 'coinsChanged', seat: 0, delta: -20, total: 5, reason: 'star' });
+  assert.deepEqual(b.events[1], { type: 'starBought', seat: 0, price: 20, total: 1, newStarSpaceId: 's18' });
   assert.equal(b.state.starSpaceId, 's18');
   assert.equal(b.state.players[0].stars, 1);
   assert.deepEqual(b.events[2].path, ['s3', 's4', 's5']);
   assert.equal(b.state.players[0].spaceId, 's5');
-  assert.equal(b.state.players[0].coins, 3);   // s5 blue
+  assert.equal(b.state.players[0].coins, 8);   // s5 blue
 });
 
 test('star: decline keeps the star and the movement continues', () => {
-  const s = starAt(at(started(3), 0, 's0', { coins: 10 }), 's2');
+  const s = starAt(at(started(3), 0, 's0', { coins: 25 }), 's2');
   const r = rollAs(s, 3);
   assert.equal(r.state.turn.step, 'star');
   const d = run(r.state, 0, { type: 'buyStar', accept: false });
   assert.deepEqual(types(d.events), ['moved', 'coinsChanged', 'turnStarted']);
   assert.equal(d.state.starSpaceId, 's2');
   assert.equal(d.state.players[0].stars, 0);
-  assert.equal(d.state.players[0].coins, 10 - 3);   // landed on s3 (red)
+  assert.equal(d.state.players[0].coins, 25 - 3);   // landed on s3 (red)
   assert.equal(d.state.players[0].spaceId, 's3');
 });
 
 test('star: offered when landing on it, landing effect follows the decision', () => {
-  const s = starAt(at(started(3), 0, 's0', { coins: 12 }), 's2');
+  const s = starAt(at(started(3), 0, 's0', { coins: 27 }), 's2');
   const r = rollAs(s, 2);
   assert.equal(r.state.turn.step, 'star');
   assert.equal(r.state.turn.stepsLeft, 0);
   const b = run(r.state, 0, { type: 'buyStar', accept: true });
-  assert.equal(b.state.players[0].coins, 12 - 10 + 3);   // s2 is blue
+  assert.equal(b.state.players[0].coins, 27 - 20 + 3);   // s2 is blue
   assert.equal(b.state.turn.seat, 1);
 });
 
 test('star: not offered when you cannot afford it; buyStar with too few coins is cantAfford', () => {
-  const r = rollAs(starAt(at(started(3), 0, 's0', { coins: 9 }), 's2'), 2);
+  const r = rollAs(starAt(at(started(3), 0, 's0', { coins: 19 }), 's2'), 2);
   assert.equal(r.state.turn.seat, 1);   // landed on the star without a prompt
   assert.equal(r.state.players[0].stars, 0);
   const forced = edit(started(3), (d) => { d.turn.step = 'star'; d.players[0].coins = 4; });
@@ -207,7 +211,7 @@ test('star relocates to a different spot every time (3 candidate spots)', () => 
   const base = started(3);
   registerBoard(makeBoard({ starSpaceIds: ['s2', 's10', 's18'] }));
   for (let i = 0; i < 40; i++) {
-    let s = edit(base, (d) => { d.players[0].coins = 10; d.players[0].spaceId = 's1'; d.rng = i * 7919; d.starSpaceId = ['s2', 's10', 's18'][i % 3]; });
+    let s = edit(base, (d) => { d.players[0].coins = 20; d.players[0].spaceId = 's1'; d.rng = i * 7919; d.starSpaceId = ['s2', 's10', 's18'][i % 3]; });
     if (s.starSpaceId !== 's2') s = edit(s, (d) => { d.players[0].spaceId = d.starSpaceId === 's10' ? 's9' : 's17'; });
     const before = s.starSpaceId;
     const r = run(forceDice(s, [1]), 0, { type: 'roll' });
@@ -219,37 +223,37 @@ test('star relocates to a different spot every time (3 candidate spots)', () => 
 });
 
 test('shop: offered on landing, buy takes coins and gives the item; null leaves', () => {
-  const s = at(started(3), 0, 's3', { coins: 20 });
+  const s = at(started(3), 0, 's3', { coins: 40 });
   const r = rollAs(s, 1);
   assert.equal(r.state.turn.step, 'shop');
   assert.deepEqual(r.state.turn.offer, [
-    { item: 'doubleDice', price: 6 }, { item: 'goldenDoener', price: 7 }, { item: 'steal', price: 8 }, { item: 'trap', price: 6 },
+    { item: 'doubleDice', price: 10 }, { item: 'goldenDoener', price: 12 }, { item: 'steal', price: 15 }, { item: 'trap', price: 10 },
   ]);
   assert.equal(applyIntent(r.state, 0, { type: 'buyItem', item: 'bogus' }).error, 'invalid');
   const b = run(r.state, 0, { type: 'buyItem', item: 'steal' });
   assert.deepEqual(types(b.events), ['coinsChanged', 'itemBought', 'turnStarted']);
-  assert.deepEqual(b.events[1], { type: 'itemBought', seat: 0, item: 'steal', price: 8 });
+  assert.deepEqual(b.events[1], { type: 'itemBought', seat: 0, item: 'steal', price: 15 });
   assert.deepEqual(b.state.players[0].items, ['steal']);
-  assert.equal(b.state.players[0].coins, 12);
+  assert.equal(b.state.players[0].coins, 25);
   const n = run(r.state, 0, { type: 'buyItem', item: null });
-  assert.equal(n.state.players[0].coins, 20);
+  assert.equal(n.state.players[0].coins, 40);
   assert.deepEqual(n.state.players[0].items, []);
   assert.equal(n.state.turn.seat, 1);
 });
 
 test('shop: offered when passing too, the walk continues afterwards', () => {
-  const r = rollAs(at(started(3), 0, 's2', { coins: 20 }), 3);   // s3 (-3), s4 shop (stop, 2 left)...
+  const r = rollAs(at(started(3), 0, 's2', { coins: 40 }), 3);   // s3 (-3), s4 shop (stop, 2 left)...
   assert.equal(r.state.turn.step, 'shop');
   assert.equal(r.state.turn.stepsLeft, 1);
   const b = run(r.state, 0, { type: 'buyItem', item: null });
   assert.equal(b.state.players[0].spaceId, 's5');
-  assert.equal(b.state.players[0].coins, 20 + 3);   // passing s3 (red) costs nothing, landing on s5 (blue) pays
+  assert.equal(b.state.players[0].coins, 40 + 3);   // passing s3 (red) costs nothing, landing on s5 (blue) pays
 });
 
 test('shop: no prompt when poor or full; itemsFull and cantAfford are enforced', () => {
   assert.equal(rollAs(at(started(3), 0, 's3', { coins: 5 }), 1).state.turn.seat, 1);
   assert.equal(rollAs(at(started(3), 0, 's3', { coins: 50, items: ['trap', 'trap', 'trap'] }), 1).state.turn.seat, 1);
-  const full = edit(started(3), (d) => { d.turn.step = 'shop'; d.turn.offer = [{ item: 'trap', price: 6 }]; d.players[0].items = ['trap', 'steal', 'steal']; d.players[0].coins = 50; });
+  const full = edit(started(3), (d) => { d.turn.step = 'shop'; d.turn.offer = [{ item: 'trap', price: 10 }]; d.players[0].items = ['trap', 'steal', 'steal']; d.players[0].coins = 50; });
   assert.equal(applyIntent(full, 0, { type: 'buyItem', item: 'trap' }).error, 'itemsFull');
   const poor = edit(full, (d) => { d.players[0].items = []; d.players[0].coins = 5; });
   assert.equal(applyIntent(poor, 0, { type: 'buyItem', item: 'trap' }).error, 'cantAfford');
@@ -284,6 +288,6 @@ test('landing on a start/shop space with no effect, turn passes', () => {
   const s = at(at(at(started(3), 0, 's18'), 1, 's9'), 2, 's9');   // nobody on the start space => no duel
   const r = rollAs(s, 2);   // passes s19, lands on s0 (start: no effect)
   assert.equal(r.state.players[0].spaceId, 's0');
-  assert.equal(r.state.players[0].coins, 5);   // s19 (red) was only passed
+  assert.equal(r.state.players[0].coins, 10);   // s19 (red) was only passed
   assert.equal(r.state.turn.seat, 1);
 });

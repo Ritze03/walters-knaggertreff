@@ -86,7 +86,10 @@ test('pickMinigame is deterministic for the same rng and consumes it', () => {
 /** every player rolls 1,2,3.. so nobody shares a space; ends in the round-minigame intro */
 function toRoundMinigame(s) {
   const n = s.turnOrder.length;
-  for (let i = 0; i < n; i++) s = rollAs(s, i + 1).state;
+  for (let i = 0; i < n; i++) {
+    s = rollAs(s, i + 1).state;
+    if (s.turn?.step === 'shop') s = run(s, s.turn.seat, { type: 'buyItem', item: null }).state;   // s4 is a shop and the start purse can buy there
+  }
   return s;
 }
 const finishMinigame = (s, placements) => run(run(s, HOST_SEAT, { type: 'advance' }).state, HOST_SEAT, { type: 'minigameDone', results: { placements } });
@@ -183,7 +186,7 @@ test('forceMinigame (?mg) is used for round minigames and duels', () => {
   assert.equal(toRoundMinigame(g).minigame.id, 'ordnungsamt');
   const f = started(3, { forceMinigame: 'forza' });
   assert.equal(toRoundMinigame(f).minigame.id, 'forza');
-  const duel = rollAs(edit(f, (d) => { d.round = 2; d.players[1].spaceId = 's5'; }), 5);
+  const duel = rollAs(edit(f, (d) => { d.round = 2; d.players[0].coins = 9; d.players[1].spaceId = 's5'; }), 5);   // 9 coins: no shop prompt at s4
   assert.equal(duel.state.minigame.id, 'forza');
   assert.equal(duel.state.minigame.purpose, 'duel');
 });
@@ -350,7 +353,7 @@ test('engine uses the allowlist for round minigames and duels', () => {
   for (let seed = 1; seed <= 20; seed++) {
     const s = toRoundMinigame(started(3, { availableMinigames: PHASE_A, seed }));
     assert.ok(PHASE_A.includes(s.minigame.id));
-    const d = rollAs(edit(started(3, { availableMinigames: PHASE_A, seed }), (x) => { x.round = 2; x.players[1].spaceId = 's5'; }), 5);
+    const d = rollAs(edit(started(3, { availableMinigames: PHASE_A, seed }), (x) => { x.round = 2; x.players[0].coins = 9; x.players[1].spaceId = 's5'; }), 5);
     assert.equal(d.state.minigame.id, 'forza');
   }
 });
@@ -367,7 +370,7 @@ test('engine: no playable round minigame => the round minigame is skipped cleanl
 });
 
 test('engine: no playable solo minigame => no duel, the turn simply continues', () => {
-  const s = edit(started(3, { availableMinigames: ['ordnungsamt'] }), (d) => { d.players[1].spaceId = 's5'; });
+  const s = edit(started(3, { availableMinigames: ['ordnungsamt'] }), (d) => { d.players[0].coins = 9; d.players[1].spaceId = 's5'; });
   const r = rollAs(s, 5);
   assert.equal(r.state.phase, 'boardTurn');
   assert.ok(!types(r.events).includes('duelStart'));
@@ -377,4 +380,42 @@ test('engine: no playable solo minigame => no duel, the turn simply continues', 
   const g = rollAs(edit(s, (d) => { d.turn.extraRolls = 1; }), 5);
   assert.equal(g.state.turn.seat, 0);
   assert.equal(g.state.turn.step, 'roll');
+});
+
+/** round 2, seat 1 waiting on s5, seat 0 poor enough (9) to walk past the s4 shop without a prompt */
+const at2 = (s) => edit(s, (d) => { d.round = 2; d.players[0].coins = 9; d.players[1].spaceId = 's5'; });
+
+test('void results (broken minigame): nobody gets coins or mgWins, the results event still fires; a genuine tie still pays', () => {
+  const s = toRoundMinigame(started(3));
+  const before = s.players.map((p) => p.coins);
+  const v = finishMinigame(s, [[0, 1, 2]]);
+  assert.deepEqual(v.events[0].coinDelta, { 0: 10, 1: 10, 2: 10 });   // a genuine full tie pays everybody the winner's reward
+  const m = run(s, HOST_SEAT, { type: 'advance' }).state;
+  const r = run(m, HOST_SEAT, { type: 'minigameDone', results: { placements: [[0, 1, 2]], void: true } });
+  assert.equal(r.state.phase, 'minigameResults');
+  assert.deepEqual(r.events, [{ type: 'minigameResults', results: { placements: [[0, 1, 2]], void: true }, coinDelta: { 0: 0, 1: 0, 2: 0 } }]);   // no coinsChanged
+  assert.deepEqual(r.state.players.map((p) => p.coins), before);
+  assert.deepEqual(r.state.players.map((p) => p.mgWins), [0, 0, 0]);
+  assert.deepEqual(r.state.minigame.coinDelta, { 0: 0, 1: 0, 2: 0 });
+  assert.equal(r.state.minigame.results.void, true);
+  // `void` must be literally true; anything else is ignored
+  const odd = run(m, HOST_SEAT, { type: 'minigameDone', results: { placements: [[0, 1, 2]], void: 'yes' } });
+  assert.equal(odd.state.minigame.results.void, undefined);
+  assert.deepEqual(odd.events[0].coinDelta, { 0: 10, 1: 10, 2: 10 });
+  // the round goes on normally afterwards
+  assert.equal(run(r.state, HOST_SEAT, { type: 'advance' }).state.round, 2);
+});
+
+test('void duel results: no stake moves even when the placements would name a winner', () => {
+  const s = at2(started(3));
+  const duel = rollAs(s, 5);
+  assert.equal(duel.state.minigame.purpose, 'duel');
+  const m = run(duel.state, HOST_SEAT, { type: 'advance' }).state;
+  const before = m.players.map((p) => p.coins);
+  const r = run(m, HOST_SEAT, { type: 'minigameDone', results: { placements: [[1], [0]], void: true } });
+  assert.deepEqual(r.events.map((e) => e.type), ['minigameResults']);
+  assert.deepEqual(r.events[0].coinDelta, { 0: 0, 1: 0 });
+  assert.deepEqual(r.state.players.map((p) => p.coins), before);
+  // the turn resumes after a void duel like after any other
+  assert.equal(run(r.state, HOST_SEAT, { type: 'advance' }).state.turn.seat, 1);
 });

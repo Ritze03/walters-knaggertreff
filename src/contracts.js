@@ -36,7 +36,7 @@ export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 6;
 export const MAX_ITEMS = 3;
 export const NAME_MAX = 16;
-export const STAR_TARGET = freeze({ min: 1, max: 15, default: 9 });   // host UI clamps to min..max; `?stars=` bypasses the max
+export const STAR_TARGET = freeze({ min: 1, max: 15, default: 5 });   // default 5 ~ 45 min (4 players, tools/sim.mjs); host UI clamps to min..max; `?stars=` bypasses the max
 export const HOST_SEAT = -1;                       // `actor` for host-internal intents (see HostIntent)
 export const SCREEN = freeze({ w: 1280, h: 720 }); // Kaplay canvas logical size (main.js creates it with letterbox)
 
@@ -276,6 +276,7 @@ export const KEYS = freeze({
 /** @typedef {{
  *   starPrice:number, blueCoins:number, redCoins:number, endspurtMultiplier:number,
  *   itemPrices:Object<ItemId,number>, minigameCoins:number[], duelStake:number,
+ *   maxDuelsPerRound:number,                   // duels per round cap (saves without it use the core default)
  *   startCoins:number, stealCoins:number, trapCoins:number, dieMin:number, dieMax:number,   // start purse, steal/trap amounts, die faces
  * }} Rules   -- copied from the single core constants file at createGame so ui/board can show prices without importing core internals. */
 
@@ -292,6 +293,7 @@ export const KEYS = freeze({
  *   seats:Seat[], players:PlayerState[],       // parallel arrays, same length, index = seat index
  *   turnOrder:number[], turnIndex:number,      // seat indices in rolling order (fixed at startGame); turn.seat === turnOrder[turnIndex]
  *   round:number,                              // 1-based during play, 0 in lobby
+ *   duelsThisRound:number,                     // duels started in the current round, reset by roundStarted; capped by rules.maxDuelsPerRound (saves without it count as 0)
  *   turn:(Turn|null),                          // null in lobby/victory
  *   starSpaceId:(string|null),                 // current star location, one of board.starSpaceIds
  *   traps:Object<string,number>,               // spaceId -> owner seat (max one per space)
@@ -370,7 +372,7 @@ export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'in
  *                unknown + lobby + free seat -> new seat; unknown otherwise -> error ERR.full (lobby full) / ERR.started (game running), state unchanged.
  *   seatPresence {seat, connected}: lobby+disconnect removes the seat; otherwise flips connected.
  *   advance      time-driven transition: minigameIntro -> start minigame (even if not all ready); minigameResults -> next round / resume duel turn / victory. Other phases: no-op.
- *   minigameDone {results}: phase minigame -> minigameResults; core converts placements to coins via rules.minigameCoins + rankOf (ties share the better rank, team mode: every member of a group gets that group's rank coins).
+ *   minigameDone {results}: phase minigame -> minigameResults; core converts placements to coins via rules.minigameCoins + rankOf (ties share the better rank, team mode: every member of a group gets that group's rank coins). results.void => no coins at all.
  *  @typedef {(
  *   { type:'seatJoin', playerId:string, profile:PlayerProfile, isBot:boolean }
  * | { type:'seatPresence', seat:number, connected:boolean }
@@ -593,9 +595,11 @@ export const FIXED_LINES = freeze({
 //   mgState MUST be plain JSON (it is broadcast as-is, keep it small, positions rounded to 1 decimal), host-private (not saved), and MUST contain
 //   `t:number` (sim ms since go, hostStep advances it) and `done:boolean`. hostStep may mutate and return the same object. Absent seats get a zero InputFrame.
 
-/** @typedef {{ placements:number[][], labels?:Object<string,string> }} MinigameResults
+/** @typedef {{ placements:number[][], labels?:Object<string,string>, void?:boolean }} MinigameResults
  *  placements = groups of seat indices, BEST FIRST; seats in one group tie; every participant appears exactly once. Solo/FFA: [[2],[0,3],[1]].
- *  Team: one group per team, best first ([[0,2],[1,3]], or a draw [[0,1,2,3]]). labels = optional per-seat result text for the results screen ("12,4 s"). */
+ *  Team: one group per team, best first ([[0,2],[1,3]], or a draw [[0,1,2,3]]). labels = optional per-seat result text for the results screen ("12,4 s").
+ *  void:true = the minigame BROKE (module threw, never started, timed out): nobody wins. core pays NO coins, moves no duel stake and counts no mgWins
+ *  (the minigameResults event still fires, coinDelta all 0). Set only by src/minigames/runner.js; a genuine tie is a normal one-group placement WITHOUT void. */
 
 /** @typedef {{ seat:number, name:string, color:string, hat:string, index:number }} SeatSummary  alias of Seat.profile + index, for rendering */
 

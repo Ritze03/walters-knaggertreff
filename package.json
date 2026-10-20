@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test",
+    "sim": "node tools/sim.mjs",
     "test:e2e": "playwright test --project=local",
     "test:online": "playwright test --project=online"
   },

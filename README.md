@@ -15,7 +15,7 @@ Kein Server, kein Account: Die Verbindung läuft direkt von Browser zu Browser (
 1. **Host:** Link oben öffnen, Name, Farbe und Hut wählen, auf **Spiel erstellen** klicken.
 2. **Einladung:** In der Lobby den Einladungslink mit dem Kopieren-Button kopieren und z. B. in Discord teilen. Er sieht so aus: `https://ritze03.github.io/walters-knaggertreff/#<gameId>`
 3. **Freunde:** Link öffnen, Name, Farbe und Hut wählen, auf **Beitreten** klicken. Jede Farbe gibt es pro Spiel nur einmal.
-4. **Host:** Das **Sternziel** einstellen (Standard 9, ca. 30-45 Minuten, möglich sind 1-15, weniger Sterne = kürzeres Spiel), das Brett wählen und auf **Start** klicken (ab 2 Spielern).
+4. **Host:** Das **Sternziel** einstellen (Standard 5, ca. 45 Minuten mit 4 Spielern, jeder Stern mehr oder weniger ca. 9 Minuten, möglich sind 1-15), das Brett wählen und auf **Start** klicken (ab 2 Spielern).
 5. **Gewinnen:** Wer zuerst das Sternziel erreicht, gewinnt. Danach kann der Host eine **Revanche** starten.
 
 Hängt der Beitritt bei "Verbinde mit dem Spiel…"? Manche Netze (strenge Firmen-/Uni-Firewalls, manche Handy-Hotspots) blocken direkte Verbindungen. Dann probiert ein anderes Netzwerk.
@@ -30,10 +30,10 @@ Hängt der Beitritt bei "Verbinde mit dem Spiel…"? Manche Netze (strenge Firme
 
 - Jede Runde würfelt jeder reihum einen **W10** (1-10) und zieht.
 - Felder: **blau** = +3 Pfand (Münzen), **rot** = -3, **Eventfelder** = brettspezifisches Chaos, dazu **Shops**.
-- Der **Stern** kostet 10 Münzen. Kaufen kannst du ihn beim Vorbeigehen oder Draufstehen, danach springt er an eine neue Stelle.
-- **Items** (max. 3) gibt es im Shop: Doppelwürfel, Goldener Döner (nochmal würfeln), Münzklau und eine Falle, die du auf ein Feld legst.
-- Landest du auf dem Feld eines anderen, gibt es ein **Duell** (1-gegen-1-Minispiel um Münzen).
-- Nach jeder Runde steigt ein **Minispiel** für alle: Platz 1 bekommt +10, Platz 2 +5, Platz 3 +2 Münzen.
+- Alle Zahlen sind von Mario Party abgeguckt: Jeder startet mit **10 Münzen**, der **Stern** kostet **20 Münzen**. Es gibt immer nur einen Stern auf dem Brett. Kaufen kannst du ihn beim Vorbeigehen oder Draufstehen, danach springt er an eine neue Stelle.
+- **Items** (max. 3) gibt es im Shop: Doppelwürfel (10), Goldener Döner (12, nochmal würfeln), Münzklau (15, klaut bis zu 10 Münzen) und eine Falle (10, klaut bis zu 8 Münzen), die du auf ein Feld legst.
+- Landest du auf dem Feld eines anderen, gibt es ein **Duell** (1-gegen-1-Minispiel um 10 Münzen). Duelle gibt es erst ab Runde 2, nicht auf dem Startfeld und höchstens **eines pro Runde**.
+- Nach jeder Runde steigt ein **Minispiel** für alle: Platz 1 bekommt +10, Platz 2 +5, Platz 3 +2 Münzen. Geht ein Minispiel kaputt (fehlt, stürzt ab, Zeit um), gibt es keine Münzen.
 - **Endspurt:** Ist jemand nur noch 2 Sterne vom Ziel entfernt, zählen Münzfelder doppelt.
 
 ### Bretter
@@ -66,9 +66,16 @@ Vite + Vanilla JS.
 ```bash
 npm ci
 npm run dev     # Dev-Server
-npm test        # Unit-Tests
-npm run build   # Produktions-Build
+npm test             # Unit-Tests (Regelwerk, headless)
+npm run build        # Produktions-Build
+npm run test:e2e     # Playwright, 3 Bots spielen ein Match (lokal, Port 4173)
+npm run test:online  # Playwright gegen die LIVE-Seite über echte Relays (nur nach einem Deploy sinnvoll)
+npm run sim -- --players 4 --target 5   # Balance-Simulation (siehe unten)
 ```
+
+### Balancing
+
+Alle Regelzahlen stehen in `src/core/rules.js`. `npm run sim` spielt viele Bot-Partien durch die echte Regel-Engine und druckt Runden bis zum Sternziel, geschätzte Minuten (130 s pro Runde), gehaltene Münzen und Duelle pro Runde. Optionen: `--players N`, `--target N`, `--games N`, `--board <id>`, `--max-duels N`, `--json`.
 
 Bei jedem Push auf `main` deployt GitHub Actions automatisch auf GitHub Pages.
 

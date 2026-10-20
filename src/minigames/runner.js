@@ -22,7 +22,7 @@ function cleanFrame(m) {
 }
 
 /**
- * @param {{ k:any, session:any, input:any, audio:any, debug?:any, onHostResults:(r:{placements:number[][], labels?:object}) => void }} o
+ * @param {{ k:any, session:any, input:any, audio:any, debug?:any, onHostResults:(r:{placements:number[][], labels?:object, void?:boolean}) => void }} o
  * @returns {{ onState(state:any, events:any[]): void, destroy(): void }}
  */
 export function createMinigameRunner({ k, session, input, audio, debug = {}, onHostResults }) {
@@ -69,7 +69,8 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
     cur.reported = true;
     try { onHostResults(results); } catch (e) { warn('onHostResults threw', e); }
   }
-  const tieAll = () => ({ placements: [cur.desc.seats.slice()] });
+  /** a BROKEN minigame (missing module, hostInit/hostStep/hostResult threw, entering failed): `void` => core pays no coins (contracts MinigameResults.void) */
+  const tieAll = () => ({ placements: [cur.desc.seats.slice()], void: true });
 
   // ---------------------------------------------------------------- network handlers (installed once, route into `cur`)
   const offs = [
@@ -232,6 +233,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
         const entries = desc.seats.map((s) => ({ seat: s, score: cur.finals.get(s)?.score ?? null }));
         const labels = {};
         for (const s of desc.seats) if (cur.finals.get(s)?.label) labels[s] = cur.finals.get(s).label;
+        if (!cur.finals.size) return report(tieAll());   // timeout and nobody ever reported a score: broken, not a genuine tie
         report({ placements: placementsFromScores(entries), labels });
       });
     }

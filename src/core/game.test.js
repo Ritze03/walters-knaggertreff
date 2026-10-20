@@ -18,7 +18,7 @@ test('botIntent: null unless it is that seat\'s decision; pure and repeatable', 
 });
 
 test('botIntent: star yes when affordable, path toward the star, shop only with comfortable money', () => {
-  const star = edit(started(3), (d) => { d.turn.step = 'star'; d.players[0].coins = 12; });
+  const star = edit(started(3), (d) => { d.turn.step = 'star'; d.players[0].coins = 25; });
   assert.deepEqual(botIntent(star, 0), { type: 'buyStar', accept: true });
   const broke = edit(star, (d) => { d.players[0].coins = 3; });
   assert.deepEqual(botIntent(broke, 0), { type: 'buyStar', accept: false });
@@ -29,15 +29,15 @@ test('botIntent: star yes when affordable, path toward the star, shop only with 
     assert.deepEqual(botIntent(edit(fork('s15'), (d) => { d.rng = i * 31; }), 0), { type: 'choosePath', spaceId: 's12' });
   }
 
-  const offer = [{ item: 'trap', price: 6 }, { item: 'steal', price: 8 }];
+  const offer = [{ item: 'trap', price: 10 }, { item: 'steal', price: 15 }];
   const shop = (coins) => edit(started(3), (d) => { d.turn.step = 'shop'; d.turn.offer = offer; d.players[0].coins = coins; });
   const rich = new Set(), poor = new Set();
   for (let i = 0; i < 60; i++) {
     rich.add(JSON.stringify(botIntent(edit(shop(40), (d) => { d.rng = i * 17; }), 0)));
-    poor.add(JSON.stringify(botIntent(edit(shop(12), (d) => { d.rng = i * 17; }), 0)));
+    poor.add(JSON.stringify(botIntent(edit(shop(25), (d) => { d.rng = i * 17; }), 0)));
   }
   assert.ok([...rich].some((x) => JSON.parse(x).item), 'rich bot buys sometimes');
-  assert.deepEqual([...poor], [JSON.stringify({ type: 'buyItem', item: null })]);   // 12 - 6 < 10 (star price)
+  assert.deepEqual([...poor], [JSON.stringify({ type: 'buyItem', item: null })]);   // 25 - 10 < 20 (star price)
 });
 
 test('botIntent: uses items sometimes and only legally (trap spot, steal target, doubleDice once)', () => {

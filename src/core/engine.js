@@ -2,7 +2,7 @@ import {
   createRng, rankOf, ERR, INTENT, HOST_SEAT, MIN_PLAYERS, MAX_PLAYERS, MAX_ITEMS, NAME_MAX, STAR_TARGET, STATE_VERSION,
   PLAYER_COLORS, HATS, BOARD_ID, MINIGAMES, ITEM,
 } from '../contracts.js';
-import { RULES_FOR_STATE, DUEL_FROM_ROUND, DUEL_NOT_ON, DIE, SHOP_ITEMS, MG_HISTORY_LEN, LOG_LEN } from './rules.js';
+import { RULES_FOR_STATE, DUEL_FROM_ROUND, DUEL_NOT_ON, MAX_DUELS_PER_ROUND, DIE, SHOP_ITEMS, MG_HISTORY_LEN, LOG_LEN } from './rules.js';
 import { getBoard, hasBoard } from './boards.js';
 import { pickMinigame } from './minigames.js';
 
@@ -74,7 +74,7 @@ export function createGame({ gameId, hostPlayerId, hostProfile, seed, starTarget
       availableMinigames: avail.length ? avail : null,   // null = every MINIGAMES id
     },
     rules: clone(RULES_FOR_STATE),
-    seats: [], players: [], turnOrder: [], turnIndex: 0, round: 0, turn: null, starSpaceId: null, traps: {},
+    seats: [], players: [], turnOrder: [], turnIndex: 0, round: 0, duelsThisRound: 0, turn: null, starSpaceId: null, traps: {},
     endspurt: false, minigame: null, mgHistory: [], winner: null, log: [],
   };
   newSeat(st, hostPlayerId, hostProfile, true, false);
@@ -200,7 +200,7 @@ const HANDLERS = {
     removeDisconnected(st);
     st.players = st.seats.map(() => newPlayer(st.rules));
     Object.assign(st, {
-      phase: 'lobby', turnOrder: [], turnIndex: 0, round: 0, turn: null, starSpaceId: null, traps: {},
+      phase: 'lobby', turnOrder: [], turnIndex: 0, round: 0, duelsThisRound: 0, turn: null, starSpaceId: null, traps: {},
       endspurt: false, minigame: null, mgHistory: [], winner: null, log: [],
     });
   },
@@ -377,6 +377,7 @@ const HANDLERS = {
     const missing = mg.seats.filter((s) => !seen.has(s));
     if (missing.length) groups.push(missing);
     const results = { placements: groups };
+    if (i.results.void === true) results.void = true;   // broken minigame: no coins, no stake, no mgWins
     if (i.results.labels && typeof i.results.labels === 'object') results.labels = clone(i.results.labels);
 
     // teams compete as units: a team's rank is its place among the teams; solo/ffa uses standard competition ranks
@@ -385,7 +386,9 @@ const HANDLERS = {
       : rankOf(groups);
     const delta = Object.fromEntries(mg.seats.map((s) => [s, 0]));
     const duel = mg.purpose === 'duel';
-    if (duel) {
+    if (results.void) {
+      // nobody wins, nobody pays: delta stays all 0
+    } else if (duel) {
       if (groups.length > 1 && groups[0].length === 1) {
         const [w] = groups[0], l = groups[1][0];
         const amt = Math.min(st.rules.duelStake, st.players[l].coins);
@@ -448,6 +451,7 @@ function checkStars(c, seat) {
 function startRound(c, round) {
   const { st } = c;
   st.round = round;
+  st.duelsThisRound = 0;
   st.turnIndex = 0;
   st.phase = 'boardTurn';
   st.minigame = null;
@@ -586,7 +590,7 @@ function arrivalPrompt(c) {
   return false;
 }
 
-/** the move ended: trap, space effect, then a duel if someone else is standing here (not in round 1, not on the start space; landing only) */
+/** the move ended: trap, space effect, then a duel if someone else is standing here (not in round 1, not on the start space, at most maxDuelsPerRound per round; landing only) */
 function land(c) {
   const { st } = c;
   const t = st.turn;
@@ -619,13 +623,15 @@ function land(c) {
     if (st.phase === 'victory') return;
   }
 
-  const duelOk = st.round >= (st.rules.duelFromRound ?? DUEL_FROM_ROUND) && !(st.rules.duelNotOn ?? DUEL_NOT_ON).includes(sp.type);
+  const duelOk = st.round >= (st.rules.duelFromRound ?? DUEL_FROM_ROUND) && !(st.rules.duelNotOn ?? DUEL_NOT_ON).includes(sp.type)
+    && (st.duelsThisRound ?? 0) < (st.rules.maxDuelsPerRound ?? MAX_DUELS_PER_ROUND);
   if (duelOk && !teleported && st.seats[seat].connected) {
     const others = st.players.flatMap((q, i) => (i !== seat && st.seats[i].connected && q.spaceId === p.spaceId ? [i] : []));
     if (others.length) {
       const opp = c.rng.pick(others);
       const mg = pickFor(c, 'duel', [seat, opp]);
       if (mg) {   // no playable solo minigame => no duel
+        st.duelsThisRound = (st.duelsThisRound ?? 0) + 1;
         emit(c, { type: 'duelStart', seats: [seat, opp] });
         log(c, null, `Duell: ${nameOf(c, seat)} gegen ${nameOf(c, opp)}!`);
         enterMinigame(c, mg);
