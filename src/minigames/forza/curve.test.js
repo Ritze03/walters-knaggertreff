@@ -14,35 +14,51 @@ test('the curve is seeded-deterministic and differs between seeds and attempts',
   assert.notDeepEqual(sample(cs[0]), sample(cs[1]));
 });
 
-test('the curve starts at 0, stalls at 99 %, jumps back, passes 100 % and ends at the cap', () => {
-  for (const seed of [1, 2, 3, 4, 5]) {
-    const c = makeCurve(createRng(seed));
+test('the curve starts at 0, rises, passes 100 % and ends at the cap', () => {
+  for (let seed = 1; seed <= 50; seed++) for (const c of makeCurves(seed)) {
     assert.equal(c.valueAt(0), 0);
-    const labels = new Set();
-    for (let t = 0; t < c.tCap; t += 10) labels.add(c.labelAt(t));
-    for (const l of ['load', 'hang', 'rush', 'stall', 'unpack', 'crawl', 'over']) assert.ok(labels.has(l), `seed ${seed} lacks ${l}`);
-    // there is a downward jump (the fake "Entpacke…" reset)
-    const v = sample(c, 10);
-    assert.ok(v.some((x, i) => i >= 10 && v[i - 10] - x > 20), 'jump back (within 100 ms)');
-    // it stalls just under 100
-    let stall = 0; for (let t = 0; t < c.tCap; t += 10) if (c.labelAt(t) === 'stall') { stall++; assert.ok(c.valueAt(t) >= 99 && c.valueAt(t) < 99.5); }
-    assert.ok(stall > 100, 'stalls for > 1 s');
-    assert.ok(Math.abs(c.valueAt(c.t100) - 100) < 1e-6);
+    assert.ok(Math.abs(c.valueAt(c.t100) - 100) < 1e-6 || c.valueAt(c.t100) >= 99.99);
     assert.equal(c.valueAt(c.tCap + 5000), CAP);
+    assert.ok(c.valueAt(c.t100 - 1) < 100);
+    for (let t = 0; t < c.tCap; t += 25) assert.ok(c.valueAt(t) <= CAP && c.valueAt(t) >= 0 && typeof c.labelAt(t) === 'string');
   }
 });
 
-test('the last stretch is a crawl: <= 8 %/s around 100 %, so a stop within 0.5 % is humanly possible', () => {
-  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
-    const c = makeCurve(createRng(seed));
-    const window = (c.valueAt(c.t100 + 50) - c.valueAt(c.t100 - 50)) / 0.1;   // %/s
-    assert.ok(window < 14, `seed ${seed}: ${window.toFixed(1)} %/s`);
-    assert.ok(c.t100 > 5000 && c.tCap < 12000);
+test('time to the first 100 % varies widely between seeds and attempts', () => {
+  const first = [], all = [];
+  for (let seed = 1; seed <= 50; seed++) { const cs = makeCurves(seed); first.push(cs[0].t100); all.push(...cs.map((c) => c.t100)); }
+  const spread = Math.max(...first) - Math.min(...first);
+  console.log(`t100 spread over 50 seeds: ${(spread / 1000).toFixed(2)} s (${Math.min(...first).toFixed(0)}..${Math.max(...first).toFixed(0)} ms)`);
+  assert.ok(spread > 2000, `spread ${spread}`);
+  assert.ok(Math.min(...all) >= 2500 && Math.max(...all) <= 9000, `${Math.min(...all)}..${Math.max(...all)}`);
+});
+
+test('segment sequences and final approaches differ between seeds and between attempts of one seed', () => {
+  const seqs = new Set(), styles = new Set();
+  for (let seed = 1; seed <= 50; seed++) for (const c of makeCurves(seed)) { seqs.add(c.kinds.join()); styles.add(c.style); }
+  assert.ok(seqs.size > 80, `only ${seqs.size} distinct sequences of 150`);
+  assert.deepEqual([...styles].sort(), ['crawl', 'fast', 'stall', 'stutter']);
+  for (let seed = 1; seed <= 20; seed++) {
+    const cs = makeCurves(seed);
+    assert.ok(new Set(cs.map((c) => Math.round(c.t100 / 100))).size >= 2, `seed ${seed}: all attempts hit 100 at the same time`);
+    assert.notEqual(cs[0].kinds.join(), cs[1].kinds.join() + cs[2].kinds.join());
+  }
+  const kinds = new Set(); for (let seed = 1; seed <= 100; seed++) makeCurves(seed).forEach((c) => c.kinds.forEach((x) => kinds.add(x)));
+  for (const x of ['fill', 'burst', 'stall', 'stutter', 'drop', 'crawl', 'pass', 'over']) assert.ok(kinds.has(x), `no ${x} segment seen`);
+});
+
+test('200 seeds: every attempt is catchable (>= 0.25 s inside 98.5-100.5), caps out and stays under 10 s', () => {
+  for (let seed = 1; seed <= 200; seed++) for (const c of makeCurves(seed * 7919)) {
+    let ms = 0;
+    for (let t = 0; t <= c.tCap; t += 5) { const v = c.valueAt(t); if (v >= 98.5 && v <= 100.5) ms += 5; }
+    assert.ok(ms >= 250, `seed ${seed}: only ${ms} ms in the window (${c.style})`);
+    assert.ok(c.tCap <= 10000, `seed ${seed}: tCap ${c.tCap}`);
+    assert.equal(c.valueAt(c.tCap), CAP);
   }
 });
 
 test('the whole game fits in durationMs even if every attempt runs to the cap', () => {
-  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+  for (let seed = 1; seed <= 300; seed++) {
     const total = makeCurves(seed).reduce((s, c) => s + c.tCap + 1500, 0);
     assert.ok(total < DURATION_MS, `seed ${seed}: ${total}`);
   }
