@@ -70,3 +70,6 @@ export const SFX_PARAMS = {
   bahnDing: [...run([659, 523, 784], 0.32, { volume: 0.7, sustain: 0.04, release: 0.5 }), ...run([1318, 1046, 1568], 0.32, { volume: 0.15, sustain: 0.02, release: 0.4 })], // ding-dong-ding announcement
 };
 
+
+/** per-sound level trim in dB, applied at play time. Evens out the loudness (300 ms rms) so nothing jumps out; peaks stay under -6 dBFS at slider 100 %. */
+export const SFX_TRIM_DB = { trap: -3, buy: -3, boing: -2, error: -1.5, bahnDing: -1, ready: -1, stamp: 5, lose: 3, win: 3, coinLoss: 3, step: 3, mash: 3, duel: 2, menuMove: 2, join: 2, whoosh: 2 };

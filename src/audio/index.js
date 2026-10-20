@@ -6,15 +6,20 @@
 // Every sfx()/music() call and every gesture retries ctx.resume(). While suspended, sfx are dropped (no backlog) and music starts when it resumes.
 import { KEYS, MUSIC } from '../contracts.js';
 import { pickLine, LINES } from './lines.js';
-import { SFX_PARAMS } from './sfx.js';
+import { SFX_PARAMS, SFX_TRIM_DB } from './sfx.js';
 import { createMusic } from './music.js';
 import { initVoice, speak, stopSpeaking } from './voice.js';
 
-const SFX_LEVEL = 0.45, MUSIC_LEVEL = 0.35;   // buses; music is quiet so Discord chatter stays on top
+// Levels (measured, see sfx.js SFX_TRIM_DB): signal path = bus -> MIX_TRIM -> limiter -> master (slider curve) -> out.
+// At slider 100 % the loudest sfx peaks about -8 dBFS / rms about -18 dBFS, music rms about -26 dBFS (sits clearly under sfx, Discord chatter stays on top).
+const SFX_LEVEL = 0.5, MUSIC_LEVEL = 0.63, MIX_TRIM = 0.5;
+
+/** slider position 0..1 -> linear gain. Cubic = perceptual (50 % is -18 dB, 20 % is -42 dB); 0 is exactly silent. */
+export const volumeToGain = (v) => { const n = Math.max(0, Math.min(1, Number(v) || 0)); return n * n * n; };
 
 let zz = null, ctx = null, master = null, sfxBus = null, player = null;
 let loading = false, armed = false, muted = null, masterVolume = null, wanted = null;
-const DEFAULT_VOLUME = 0.7;
+const DEFAULT_VOLUME = 0.8;   // slider position (-5.8 dB on the cubic curve)
 const buffers = new WeakMap();   // sfx part -> AudioBuffer
 const handlers = new Set();
 const warned = new Set();
@@ -23,7 +28,7 @@ const warnOnce = (msg) => { if (!warned.has(msg)) { warned.add(msg); console.war
 const store = () => { try { return typeof window !== 'undefined' ? window.localStorage : null; } catch { return null; } };
 
 function applyGain() {
-  if (master) master.gain.setTargetAtTime(isMuted() ? 0 : getMasterVolume(), ctx.currentTime, 0.02);
+  if (master) master.gain.setTargetAtTime(isMuted() ? 0 : volumeToGain(getMasterVolume()), ctx.currentTime, 0.02);
 }
 
 function resume() {
@@ -36,16 +41,22 @@ function loadEngine() {
   import('zzfx').then(({ ZZFX }) => {
     zz = ZZFX;
     ctx = ZZFX.audioContext;
-    master = ctx.createGain();
+    master = ctx.createGain();   // slider volume (curved); mute ramps it to 0
     master.connect(ctx.destination);
+    const limiter = ctx.createDynamicsCompressor();   // tames stacked sfx + music: gentle above -20 dB, fast attack so peaks never jump out
+    limiter.threshold.value = -20; limiter.knee.value = 10; limiter.ratio.value = 6; limiter.attack.value = 0.003; limiter.release.value = 0.25;
+    limiter.connect(master);
+    const mix = ctx.createGain();   // fixed headroom in front of everything
+    mix.gain.value = MIX_TRIM;
+    mix.connect(limiter);
     sfxBus = ctx.createGain();
     sfxBus.gain.value = SFX_LEVEL;
-    sfxBus.connect(master);
+    sfxBus.connect(mix);
     const musicBus = ctx.createGain();
     musicBus.gain.value = MUSIC_LEVEL;
-    musicBus.connect(master);
+    musicBus.connect(mix);
     player = createMusic(ctx, musicBus);
-    master.gain.value = isMuted() ? 0 : getMasterVolume();
+    master.gain.value = isMuted() ? 0 : volumeToGain(getMasterVolume());
     resume();
     player.play(wanted);
   }).catch((e) => { console.warn('[audio] unavailable, running silent', e); });
@@ -77,6 +88,7 @@ export function sfx(name, { volume = 1, rate = 1 } = {}) {
   try {
     const r = rate * (1 + (Math.random() * 2 - 1) * 0.05);   // slight pitch wobble so repeats do not sound robotic
     const t0 = ctx.currentTime + 0.01;
+    const trim = 10 ** ((SFX_TRIM_DB[name] ?? 0) / 20);
     for (const part of parts) {
       let buf = buffers.get(part);
       if (!buf) {
@@ -89,7 +101,7 @@ export function sfx(name, { volume = 1, rate = 1 } = {}) {
       const src = ctx.createBufferSource(), g = ctx.createGain();
       src.buffer = buf;
       src.playbackRate.value = r;
-      g.gain.value = Math.max(0, Math.min(1, volume));
+      g.gain.value = Math.max(0, Math.min(1, volume)) * trim;
       src.connect(g).connect(sfxBus);
       src.start(t0 + part.at / r);
     }
@@ -108,7 +120,7 @@ export function say(idOrText, opts) {
   if (!text) return;
   if (!Object.hasOwn(LINES, idOrText) && /^[a-z][A-Za-z0-9]*$/.test(idOrText)) warnOnce(`unknown line id "${idOrText}"`);
   for (const h of [...handlers]) { try { h(text); } catch (e) { console.error(e); } }   // captions: always, they are the no-voice fallback
-  if (!isMuted() && getMasterVolume() > 0) speak(text, { volume: getMasterVolume(), ...opts });
+  if (!isMuted() && getMasterVolume() > 0) speak(text, { volume: volumeToGain(getMasterVolume()), ...opts });
 }
 
 export function onCaption(handler) {
