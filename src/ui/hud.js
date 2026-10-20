@@ -3,6 +3,13 @@ import { ITEM_INFO } from '../contracts.js';
 import { h } from './dom.js';
 import { blob } from './avatar.js';
 
+/** "Runde 3 · noch 2 am Zug": the round minigame starts once everybody (incl. the current player) has rolled */
+function roundText(state) {
+  if (!state.turn) return `Runde ${state.round}`;
+  const left = state.turnOrder.slice(state.turnIndex).filter((i) => state.seats[i]?.connected).length;
+  return `Runde ${state.round} · ${left <= 1 ? 'letzter Zug, dann Minispiel' : `noch ${left} am Zug`}`;
+}
+
 /** Fully re-rendered from state on every update (pointer-events: none, no focus to lose). */
 export function renderHud(el, state, selfSeat) {
   if (!state) { el.replaceChildren(); return; }
@@ -23,7 +30,7 @@ export function renderHud(el, state, selfSeat) {
           h('span', { class: 'items', testid: `hud-items-${seat.index}` }, p.items.map((it) => h('i', { title: ITEM_INFO[it].name }, ITEM_INFO[it].emoji))))));
     })),
     h('div', { class: 'hud-info', testid: 'hud-info' },
-      h('span', { testid: 'hud-round' }, `Runde ${state.round}`), h('span', { testid: 'hud-target' }, `Ziel ⭐ ${state.settings.starTarget}`)),
+      h('span', { testid: 'hud-round' }, roundText(state)), h('span', { testid: 'hud-target' }, `Ziel ⭐ ${state.settings.starTarget}`)),
     ...(state.endspurt ? [h('div', { class: 'endspurt', testid: 'endspurt' }, 'ENDSPURT! Münzfelder zählen doppelt')] : []),
   );
 }

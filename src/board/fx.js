@@ -32,6 +32,39 @@ export function createFx({ k, ui, scene, anim, audio }) {
     c.destroy();
   }
 
+  /**
+   * Full-screen announcement ("MINISPIEL-ZEIT!", "DUELL!"): dimmed screen, an untinted emoji pair, a huge title, a sub line and an optional
+   * gold pill (the minigame's name). Resolves when it is gone. Capital umlauts are avoided by the callers (they clip in the default font).
+   */
+  async function announce({ emoji = '🎉', title, sub, pill, color = '#ff9f1c', hold = 2.2 } = {}) {
+    const wrap = W - 160;
+    const root = ui.add([k.pos(0, 0)]);
+    const dim = root.add([k.rect(W, H), k.color(10, 8, 24), k.opacity(0)]);
+    const c = root.add([k.pos(W / 2, H / 2), k.scale(0.2, 0.2), k.rotate(-2)]);
+    const band = 380;
+    c.add([k.pos(0, 12), k.rect(W + 60, band, { radius: 0 }), k.color(0, 0, 0), k.opacity(0.35), k.anchor('center')]);
+    c.add([k.rect(W + 60, band), k.color(d.col(color)), k.outline(10, d.col(INK)), k.anchor('center')]);
+    // emoji get their own plain white (= untinted) text objects
+    for (const sx of [-1, 1]) text(c, emoji, 110, { pos: [sx * (W / 2 - 110), -70], line: 0 });
+    text(c, title, 100, { pos: [0, -70], width: wrap });
+    if (sub) text(c, sub, 42, { pos: [0, 30], color: '#fff6d6', line: 5, width: wrap });
+    if (pill) {
+      const f = k.formatText({ text: pill, size: 52 });
+      const w = Math.min(wrap, f.width + 90);
+      c.add([k.pos(0, 112), k.rect(w, 82, { radius: 41 }), k.color(d.col(INK)), k.outline(6, d.col('#ffd43b')), k.anchor('center')]);
+      text(c, pill, 52, { pos: [0, 114], color: '#ffd43b', ink: INK, line: 0, width: wrap });
+    }
+    flash('#ffffff', 0.5, 0.4);
+    scene.cam.shake(10, 0.4);
+    anim.tween(0.3, (p) => { dim.opacity = 0.55 * p; });
+    await anim.tween(0.4, (p) => { c.scale = k.vec2(0.2 + 0.8 * p, 0.2 + 0.8 * p); c.angle = -2 - 6 * (1 - p); }, anim.ease.easeOutBack);
+    // gentle pulse while it stays
+    await anim.tween(hold, (p, raw) => { const s = 1 + Math.sin(raw * Math.PI * 6) * 0.015; c.scale = k.vec2(s, s); });
+    anim.tween(0.25, (p) => { dim.opacity = 0.55 * (1 - p); });
+    await anim.tween(0.22, (p) => { c.scale = k.vec2(1, 1 - p); }, anim.ease.easeInQuad);
+    root.destroy();
+  }
+
   /** small pill near the top, e.g. "Anna ist dran" */
   async function chip(msg, color, hold = 1.0) {
     const f = k.formatText({ text: msg, size: 28 });
@@ -110,5 +143,5 @@ export function createFx({ k, ui, scene, anim, audio }) {
     }).then(() => ps.forEach((p) => p.o.destroy()));
   }
 
-  return { text, banner, chip, flash, dice, confetti };
+  return { text, banner, announce, chip, flash, dice, confetti };
 }

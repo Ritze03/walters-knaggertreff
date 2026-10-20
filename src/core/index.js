@@ -7,3 +7,4 @@ export { createGame, applyIntent, serialize, deserialize, resumeGame } from './e
 export { botIntent } from './bot.js';
 export { pickMinigame } from './minigames.js';
 export { registerBoard, getBoard } from './boards.js';
+export { previewPath, previewLanding } from './preview.js';

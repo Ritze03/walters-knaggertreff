@@ -1,6 +1,6 @@
 // Ordnungsamt-Flucht: Kaplay client. Draws the latest host snapshots (interpolated); the rules live in sim.js.
 import { createRng } from '../../contracts.js';
-import { box, disc, label, ease, setText, addHint } from '../draw.js';
+import { box, disc, label, ease, setText, addHint, bubble as speechBubble } from '../draw.js';
 import { ARENA, C, DURATION_MS, botFrame } from './sim.js';
 
 const BUBBLE = 'Ordnungsamt! Ausweis bitte!';
@@ -70,11 +70,11 @@ export function mountOrdnungsamt(ctx) {
   };
   const bubble = (seat) => {
     const e = crew.get(seat);
-    const o = fx.add([k.pos(e.x, e.y - 64), k.anchor('center')]);
-    box(k, o, 0, 0, 262, 34, '#ffffff', { anchor: 'center', radius: 10, outline: [3, '#1b2a49'] });
-    label(k, o, BUBBLE, 0, 0, { size: 17, color: '#1b2a49' });
+    // sized to the rendered text and kept inside the whole screen (a victim at the edge must not push it off-screen)
+    const b = speechBubble(k, fx, BUBBLE, { size: 17, bounds: { x0: 6, y0: 70, x1: ARENA.w - 6, y1: ARENA.h - 6 } });
     let age = 0;
-    o.onUpdate(() => { age += k.dt(); o.pos = k.vec2(e.x, e.y - 64 - Math.min(age * 30, 10)); if (age > 1.5) o.destroy(); });
+    b.place(e.x, e.y - 40);
+    b.obj.onUpdate(() => { age += k.dt(); b.place(e.x, e.y - 40 - Math.min(age * 30, 10)); if (age > 1.5) b.obj.destroy(); });
   };
   const showBanner = (text, sub = '') => { banner.text = text; bannerSub.text = sub; bannerAge = 0; };
 

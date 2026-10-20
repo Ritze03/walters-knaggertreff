@@ -4,6 +4,7 @@ import { ITEM, ITEM_INFO, MAX_ITEMS } from '../contracts.js';
 import { makeDraw } from './draw.js';
 import { addHint } from '../minigames/hint.js';
 import { HINT } from '../ui/glyphs.js';
+import { previewPath } from '../core/preview.js';   // the SAME step counting as the engine's walk()
 
 const PICK = `${HINT.move} wählen`;
 
@@ -149,10 +150,18 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     const dirs = opts.map((id) => { const p = scene.spacePos(id); const l = Math.hypot(p.x - here.x, p.y - here.y) || 1; return { x: (p.x - here.x) / l, y: (p.y - here.y) / l }; });
     const arrowOf = (v) => ['➡️', '↘️', '⬇️', '↙️', '⬅️', '↖️', '⬆️', '↗️'][Math.round(((Math.atan2(v.y, v.x) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)) % 8];
     const cards = opts.map((id, i) => ({ emoji: arrowOf(dirs[i]), name: scene.decor.pathLabels[id] ?? `Weg ${i + 1}`, detail: `Noch ${t.stepsLeft} Schritte.` }));
+    // where each option would end with the remaining steps (core's own counting); a further fork on the way ends the preview there
+    const here0 = st.players[seat].spaceId;
+    const previews = opts.map((id) => previewPath(scene.board, here0, id, t.stepsLeft));
     const mark = (selIdx) => {
       scene.setMarkers(opts.map((id, i) => { const p = scene.spacePos(id); return { x: p.x, y: p.y, sel: i === selIdx, arrow: true, color: i === selIdx ? '#ffe14d' : '#ffffff', label: cards[i].name }; }));
+      const pv = previews[selIdx];
+      scene.setPreview({
+        route: pv.path.slice(0, -1).map(scene.spacePos), target: scene.spacePos(pv.end), near: pv.path.length <= 1,
+        label: pv.landed ? '🎯 hier landest du' : '🎯 Abzweigung →?',
+      });
     };
-    scene.cam.fit([here, ...opts.map(scene.spacePos)], 200, 0.9);
+    scene.cam.fit([here, ...opts.map(scene.spacePos), ...previews.map((pv) => scene.spacePos(pv.end))], 170, 0.9);
     const menu = openMenu({
       title: 'Welchen Weg?', cards, hint: `${PICK}   ${HINT.confirm} bestätigen`, sel: 0, onSel: mark,
       onPick: (i) => send({ type: 'choosePath', spaceId: opts[i] }),
@@ -170,7 +179,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
       menu.setSel(to);
     };
     const baseClose = menu.close;
-    menu.close = () => { baseClose(); scene.setMarkers([]); };
+    menu.close = () => { baseClose(); scene.setMarkers([]); scene.setPreview(null); };
   }
 
   function starMenu(st, seat) {
@@ -232,6 +241,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
     prompts.menu = null;
     prompts.key = null;
     scene.setMarkers([]);
+    scene.setPreview(null);
   }
 
   /** (re)builds the prompt for the current state if it changed; call only when no animation is running */

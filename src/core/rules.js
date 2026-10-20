@@ -18,6 +18,10 @@ export const MINIGAME_COINS = Object.freeze([10, 5, 2]);
 
 /** duel: the loser pays the winner (at most what the loser has). A tie pays nothing. */
 export const DUEL_STAKE = 8;
+/** duels never happen before this round (round 1 everybody is still bunched up around the start space) */
+export const DUEL_FROM_ROUND = 2;
+/** duels never trigger on a space of this type (everybody starts there and loops past it) */
+export const DUEL_NOT_ON = Object.freeze(['start']);
 
 export const ITEM_PRICES = Object.freeze({ doubleDice: 6, goldenDoener: 7, steal: 8, trap: 6 });
 /** order in which the shop lists items */
@@ -44,6 +48,8 @@ export const RULES_FOR_STATE = Object.freeze({
   itemPrices: ITEM_PRICES,
   minigameCoins: MINIGAME_COINS,
   duelStake: DUEL_STAKE,
+  duelFromRound: DUEL_FROM_ROUND,
+  duelNotOn: DUEL_NOT_ON,
   // extras beyond the contract's Rules typedef
   startCoins: START_COINS,
   stealCoins: STEAL_COINS,

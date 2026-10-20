@@ -1,6 +1,11 @@
 // GameEvent -> animation. Each handler returns a promise that resolves when its show is over. index.js plays them strictly in order.
 // In "instant" mode (playback lags behind the state stream) tweens finish at once and sfx/voice are skipped.
 import { ITEM, ITEM_INFO } from '../contracts.js';
+import { getMinigame } from '../minigames/index.js';
+
+/** how long the full-screen "minigame time" / duel announcements stay up */
+const ANNOUNCE_HOLD_S = 2.2;
+const mgName = (mg) => (mg ? getMinigame(mg.id)?.name ?? mg.id : '');
 
 const GREEN = '#8ce99a', RED = '#ff6b6b', GOLD = '#ffd43b';
 
@@ -195,9 +200,24 @@ export function createPlayback({ k, scene: S, fx, anim: A, audio }) {
       say('duel');
       S.cam.fit(ev.seats.map((s) => S.tokenTop(s)), 240, 0.9);
       ev.seats.forEach((s) => tok(s)?.av.bounce());
-      S.cam.shake(14, 0.5);
       fx.flash('#ff3b3b', 0.35, 0.5);
-      await fx.banner(`⚔️ DUELL! ${name(st, ev.seats[0])} gegen ${name(st, ev.seats[1])}`, { color: '#e8505b', size: 56, hold: 1.5, y: 0.3 });
+      const mg = st.minigame?.purpose === 'duel' ? st.minigame : null;
+      await fx.announce({
+        emoji: '⚔️', title: 'DUELL!', sub: `${name(st, ev.seats[0])} gegen ${name(st, ev.seats[1])}`, pill: mg ? mgName(mg) : undefined,
+        color: '#e8505b', hold: ANNOUNCE_HOLD_S,
+      });
+    },
+
+    /** the round minigame is about to start: the board has played out the last move, now the unmissable announcement */
+    async minigameStart(ev) {
+      if (ev.minigame.purpose !== 'round') return;   // a duel already announced itself with duelStart
+      sfx('fanfare');
+      say(ev.minigame.id === 'forza' ? 'forza' : 'minigameGo');
+      S.cam.overview();
+      await fx.announce({
+        emoji: '🎉', title: 'MINISPIEL-ZEIT!', sub: 'Alle haben gewürfelt — jetzt wird gezockt!', pill: mgName(ev.minigame),
+        color: '#9b5de5', hold: ANNOUNCE_HOLD_S,
+      });
     },
 
     async endspurtStarted() {

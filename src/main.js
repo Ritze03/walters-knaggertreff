@@ -73,7 +73,9 @@ window.__wk = {       // read-only debug hook for tests
   selfSeat: () => current?.selfSeat ?? -1,
   get session() { return current?.session ?? null; },
   debug,
+  trace: [],            // [{ t, what }]: board playback markers (+event / -event) and screen switches, to verify the order in tests
 };
+const trace = (what) => window.__wk.trace.push({ t: Math.round(performance.now()), what });
 
 showTitle();
 
@@ -127,6 +129,7 @@ function startRun({ gameId, profile, isHost, initial = null }) {
   let hostState = initial;   // host only: THE state
   let lastRev = -1;
   let board = null, runner = null;
+  let handing = false;   // the board is still playing out its last events + the minigame announcement; the runner mounts afterwards
   let botTimer = null, autoTimer = null, phaseTimer = null, phaseKey = null, victoryTimer = null;
   const run = { state: null, selfSeat: -1, session, stop };
   current = run;
@@ -210,27 +213,32 @@ function startRun({ gameId, profile, isHost, initial = null }) {
     lastRev = rev;
     run.state = state; run.selfSeat = selfSeat;
     syncScreens(state, events, selfSeat);
+    if (handing) return;   // bots and host timers start when the runner is on screen (see handOver)
     scheduleBot(state, selfSeat);
     if (isHost) scheduleHostTimers(state);
   }
 
   function syncScreens(state, events, selfSeat) {
     const phase = state.phase;
-    // board and runner are Kaplay screens; they live exactly as long as their phases (victory keeps the board behind the DOM panel)
-    if (board && phase !== PHASE.boardTurn && phase !== PHASE.victory) { board.destroy(); board = null; }
-    if (runner && !MINIGAME_PHASES.has(phase)) { runner.destroy(); runner = null; }
-    if (phase === PHASE.boardTurn && !board) board = mountBoard({ k, session, input, audio, debug });
-    if (MINIGAME_PHASES.has(phase) && !runner) {
-      runner = createMinigameRunner({
-        k, session, input, audio, debug,
-        onHostResults: (results) => { if (isHost) apply(HOST_SEAT, { type: 'minigameDone', results }); },
-      });
+    // board and runner are Kaplay screens; they live exactly as long as their phases (victory keeps the board behind the DOM panel).
+    // Entering a minigame phase does NOT destroy the board at once: it first plays out its queue (last dice, hops, coins) and the
+    // announcement banner (minigameStart / duelStart events), then handOver() swaps in the runner.
+    const toMinigame = MINIGAME_PHASES.has(phase);
+    if (board && toMinigame) {
+      board.onState(state, events);
+      if (!handing) { handing = true; board.whenIdle().then(handOver); }
+    } else if (board && phase !== PHASE.boardTurn && phase !== PHASE.victory) { board.destroy(); board = null; }
+    if (runner && !toMinigame) { runner.destroy(); runner = null; }
+    if (phase === PHASE.boardTurn && !board) {
+      handing = false;
+      board = mountBoard({ k, session, input, audio, debug, trace });
     }
-    board?.onState(state, events);
+    if (toMinigame && !runner && !board) mountRunner();
+    if (!toMinigame) board?.onState(state, events);
     runner?.onState(state, events);
 
-    audio.music(MUSIC_OF[phase]);
-    ui.renderHud(phase === PHASE.boardTurn ? state : null, selfSeat);
+    audio.music(handing ? 'board' : MUSIC_OF[phase]);
+    ui.renderHud(phase === PHASE.boardTurn || handing ? state : null, selfSeat);
 
     if (phase === PHASE.lobby) {
       if (ui.panelKind() !== 'lobby') {
@@ -247,6 +255,27 @@ function startRun({ gameId, profile, isHost, initial = null }) {
       victoryTimer = cancel(victoryTimer);
       ui.hidePanel();
     }
+  }
+
+  function mountRunner() {
+    trace('runner mounted');
+    runner = createMinigameRunner({
+      k, session, input, audio, debug,
+      onHostResults: (results) => { if (isHost) apply(HOST_SEAT, { type: 'minigameDone', results }); },
+    });
+  }
+
+  /** the board has nothing left to show: swap it for the runner and start the clocks that depend on the minigame being on screen */
+  function handOver() {
+    if (stopped || !handing) return;
+    handing = false;
+    const st = run.state;
+    if (!board || !st || !MINIGAME_PHASES.has(st.phase)) return;   // the phase moved on while the banner was up: normal flow handles it
+    trace(`board destroyed (pending ${board.pending()})`);
+    board.destroy(); board = null;
+    syncScreens(st, [], run.selfSeat);
+    scheduleBot(st, run.selfSeat);
+    if (isHost) scheduleHostTimers(st);
   }
 
   const sendIntent = (intent) => session.sendIntent(intent);

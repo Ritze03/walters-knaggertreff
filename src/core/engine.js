@@ -2,7 +2,7 @@ import {
   createRng, rankOf, ERR, INTENT, HOST_SEAT, MIN_PLAYERS, MAX_PLAYERS, MAX_ITEMS, NAME_MAX, STAR_TARGET, STATE_VERSION,
   PLAYER_COLORS, HATS, BOARD_ID, MINIGAMES, ITEM,
 } from '../contracts.js';
-import { RULES_FOR_STATE, DIE, SHOP_ITEMS, MG_HISTORY_LEN, LOG_LEN } from './rules.js';
+import { RULES_FOR_STATE, DUEL_FROM_ROUND, DUEL_NOT_ON, DIE, SHOP_ITEMS, MG_HISTORY_LEN, LOG_LEN } from './rules.js';
 import { getBoard, hasBoard } from './boards.js';
 import { pickMinigame } from './minigames.js';
 
@@ -586,7 +586,7 @@ function arrivalPrompt(c) {
   return false;
 }
 
-/** the move ended: trap, space effect, then a duel if someone else is standing here */
+/** the move ended: trap, space effect, then a duel if someone else is standing here (not in round 1, not on the start space; landing only) */
 function land(c) {
   const { st } = c;
   const t = st.turn;
@@ -619,7 +619,8 @@ function land(c) {
     if (st.phase === 'victory') return;
   }
 
-  if (!teleported && st.seats[seat].connected) {
+  const duelOk = st.round >= (st.rules.duelFromRound ?? DUEL_FROM_ROUND) && !(st.rules.duelNotOn ?? DUEL_NOT_ON).includes(sp.type);
+  if (duelOk && !teleported && st.seats[seat].connected) {
     const others = st.players.flatMap((q, i) => (i !== seat && st.seats[i].connected && q.spaceId === p.spaceId ? [i] : []));
     if (others.length) {
       const opp = c.rng.pick(others);

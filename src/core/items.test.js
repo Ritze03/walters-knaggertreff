@@ -4,6 +4,8 @@ import { applyIntent } from './index.js';
 import { started, run, edit, forceDice, rollAs, types } from './fixtures.js';
 
 const give = (s, seat, items, extra = {}) => edit(s, (d) => { Object.assign(d.players[seat], { items }, extra); });
+/** duels only happen from round 2 on */
+const round2 = (s) => edit(s, (d) => { d.round = 2; });
 const at = (s, seat, spaceId, extra = {}) => edit(s, (d) => { Object.assign(d.players[seat], { spaceId }, extra); });
 
 test('useItem: must own the item, only before rolling, only on your turn', () => {
@@ -118,7 +120,7 @@ test('trap triggers only on landing, not when passing', () => {
 });
 
 test('duel: landing on an occupied space starts a solo 1v1 and the turn resumes afterwards', () => {
-  let s = at(started(3), 1, 's5');
+  let s = at(round2(started(3)), 1, 's5');
   const r = rollAs(s, 5);
   assert.deepEqual(types(r.events), ['diceRolled', 'moved', 'coinsChanged', 'duelStart', 'minigameStart']);
   assert.deepEqual(r.events[3], { type: 'duelStart', seats: [0, 1] });
@@ -143,11 +145,11 @@ test('duel: landing on an occupied space starts a solo 1v1 and the turn resumes 
   assert.equal(adv.state.minigame, null);
   assert.equal(adv.state.turn.seat, 1);   // next player's turn
   assert.deepEqual(types(adv.events), ['turnStarted']);
-  assert.equal(adv.state.round, 1);
+  assert.equal(adv.state.round, 2);
 });
 
 test('duel: loser pays at most what they own; a tie pays nothing; goldenDoener roll is kept after the duel', () => {
-  let s = at(started(3), 1, 's5', { coins: 3 });
+  let s = at(round2(started(3)), 1, 's5', { coins: 3 });
   s = edit(s, (d) => { d.turn.extraRolls = 1; });
   const r = rollAs(s, 5);
   const done = run(run(r.state, -1, { type: 'advance' }).state, -1, { type: 'minigameDone', results: { placements: [[1], [0]] } });
@@ -165,7 +167,7 @@ test('duel: loser pays at most what they own; a tie pays nothing; goldenDoener r
 });
 
 test('duel: with several players on the space exactly one is picked, deterministically', () => {
-  let s = at(at(started(4), 1, 's5'), 2, 's5');
+  let s = at(at(round2(started(4)), 1, 's5'), 2, 's5');
   s = at(s, 3, 's5');
   const picks = new Set();
   for (let i = 0; i < 30; i++) {
@@ -182,12 +184,46 @@ test('duel: with several players on the space exactly one is picked, determinist
 });
 
 test('duel: an absent opponent (or an absent mover) means no duel', () => {
-  let s = at(started(3), 1, 's5');
+  let s = at(round2(started(3)), 1, 's5');
   s = run(s, -1, { type: 'seatPresence', seat: 1, connected: false }).state;
   const r = rollAs(s, 5);
   assert.equal(r.state.phase, 'boardTurn');
   assert.ok(!types(r.events).includes('duelStart'));
-  let m = at(started(3), 1, 's5');
+  let m = at(round2(started(3)), 1, 's5');
   m = run(m, -1, { type: 'seatPresence', seat: 0, connected: false }).state;
   assert.equal(rollAs(m, 5).state.phase, 'boardTurn');
+});
+
+test('duel: never in round 1, even when landing on an occupied space', () => {
+  const s = at(started(3), 1, 's5');
+  assert.equal(s.round, 1);
+  const r = rollAs(s, 5);
+  assert.ok(!types(r.events).includes('duelStart'));
+  assert.equal(r.state.phase, 'boardTurn');
+  assert.equal(r.state.turn.seat, 1);   // straight on to the next player
+  // the very same landing in round 2 is a duel
+  assert.ok(types(rollAs(round2(s), 5).events).includes('duelStart'));
+});
+
+test('duel: never on the start space (a fresh round-2 pile-up at s0 is no duel)', () => {
+  // seat 0 stands on s19, seat 1 waits on the start space s0: landing there with a 1 must not duel
+  let s = at(at(round2(started(3)), 0, 's19'), 1, 's0');
+  const r = rollAs(s, 1);
+  assert.deepEqual(r.state.players[0].spaceId, 's0');
+  assert.ok(!types(r.events).includes('duelStart'));
+  assert.equal(r.state.phase, 'boardTurn');
+});
+
+test('duel: only on landing, not when passing a player', () => {
+  const s = at(round2(started(3)), 1, 's3');
+  const r = rollAs(s, 5);   // s0 -> s5, passes s3
+  assert.ok(!types(r.events).includes('duelStart'));
+});
+
+test('duel: the thresholds live in state.rules (duelFromRound / duelNotOn)', () => {
+  const s = at(started(3), 1, 's5');
+  const early = edit(s, (d) => { d.rules.duelFromRound = 1; });
+  assert.ok(types(rollAs(early, 5).events).includes('duelStart'));
+  const onBlue = edit(round2(s), (d) => { d.rules.duelNotOn = ['blue']; });
+  assert.ok(!types(rollAs(onBlue, 5).events).includes('duelStart'));
 });

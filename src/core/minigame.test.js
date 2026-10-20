@@ -183,7 +183,7 @@ test('forceMinigame (?mg) is used for round minigames and duels', () => {
   assert.equal(toRoundMinigame(g).minigame.id, 'ordnungsamt');
   const f = started(3, { forceMinigame: 'forza' });
   assert.equal(toRoundMinigame(f).minigame.id, 'forza');
-  const duel = rollAs(edit(f, (d) => { d.players[1].spaceId = 's5'; }), 5);
+  const duel = rollAs(edit(f, (d) => { d.round = 2; d.players[1].spaceId = 's5'; }), 5);
   assert.equal(duel.state.minigame.id, 'forza');
   assert.equal(duel.state.minigame.purpose, 'duel');
 });
@@ -350,7 +350,7 @@ test('engine uses the allowlist for round minigames and duels', () => {
   for (let seed = 1; seed <= 20; seed++) {
     const s = toRoundMinigame(started(3, { availableMinigames: PHASE_A, seed }));
     assert.ok(PHASE_A.includes(s.minigame.id));
-    const d = rollAs(edit(started(3, { availableMinigames: PHASE_A, seed }), (x) => { x.players[1].spaceId = 's5'; }), 5);
+    const d = rollAs(edit(started(3, { availableMinigames: PHASE_A, seed }), (x) => { x.round = 2; x.players[1].spaceId = 's5'; }), 5);
     assert.equal(d.state.minigame.id, 'forza');
   }
 });

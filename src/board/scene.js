@@ -37,7 +37,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   const overlay = world.add([k.pos(0, 0)]);  // markers, turn arrow, step badge
   const fxLayer = world.add([k.pos(0, 0)]);
 
-  const view = { endspurt: false, turnSeat: null, badge: null, markers: [], starTint: 0 };
+  const view = { endspurt: false, turnSeat: null, badge: null, markers: [], preview: null, starTint: 0 };
 
   // ---------- roads ----------
   const segs = board.spaces.flatMap((s) => s.next.map((n) => {
@@ -177,6 +177,9 @@ export function createScene({ k, root, board, anim, decorBuild }) {
     }
   });
 
+  const widths = new Map();
+  const textW = (s, size) => { const key = `${size}|${s}`; let w = widths.get(key); if (w === undefined) widths.set(key, (w = k.formatText({ text: s, size }).width)); return w; };
+
   // ---------- turn arrow + step badge + prompt markers ----------
   overlay.onDraw(() => {
     const t = k.time();
@@ -196,11 +199,36 @@ export function createScene({ k, root, board, anim, decorBuild }) {
       d.circle(m.x, m.y, 62 * pulse, m.color ?? '#ffe14d', { a: m.sel ? 0.35 : 0.15 });
       if (m.arrow) d.poly([[m.x - 20, m.y - 112 + bounce], [m.x + 20, m.y - 112 + bounce], [m.x, m.y - 82 + bounce]], m.color ?? '#ffe14d', { line: 4 });
       if (m.label) {
-        const w = m.label.length * 13 + 30;
+        const w = textW(m.label, 22) + 34;
         d.rect(m.x, m.y - 138 + bounce, w, 36, m.sel ? '#2a2340' : '#2a2340', { anchor: 'center', r: 18, line: m.sel ? 5 : 3, lineColor: m.color ?? '#ffe14d', a: m.sel ? 1 : 0.7 });
         d.dtext(m.label, m.x, m.y - 138 + bounce, 22, '#ffffff', { line: 0 });
       }
     }
+  });
+
+  // path prompt preview: dots along the route and a cyan landing ring + pin + tag on the space where the move would end
+  overlay.onDraw(() => {
+    const pv = view.preview;
+    if (!pv) return;
+    const t = k.time();
+    const C = '#35d0ff';
+    pv.route.forEach((p, i) => {
+      const wob = 1 + Math.sin(t * 6 - i * 0.9) * 0.18;
+      d.circle(p.x, p.y, 11 * wob, C, { line: 4 });
+    });
+    const g = pv.target;
+    const pulse = 1 + Math.sin(t * 7) * 0.1;
+    d.circle(g.x, g.y, 56 * pulse, C, { a: 0.28 });
+    for (let i = 0; i < 14; i++) {   // dotted ring that slowly turns
+      const a = (i / 14) * Math.PI * 2 + t * 1.5;
+      d.circle(g.x + Math.cos(a) * 52 * pulse, g.y + Math.sin(a) * 52 * pulse, 5, C, { line: 2 });
+    }
+    const bounce = Math.abs(Math.sin(t * 6)) * 14;
+    if (!pv.near) d.poly([[g.x - 26, g.y - 120 - bounce], [g.x + 26, g.y - 120 - bounce], [g.x, g.y - 72 - bounce]], C, { line: 5 });
+    const label = pv.label;
+    const w = textW(label, 24) + 40;
+    d.rect(g.x, g.y + 92, w, 44, '#2a2340', { anchor: 'center', r: 22, line: 5, lineColor: C });
+    d.dtext(label, g.x, g.y + 93, 24, '#ffffff', { line: 0 });
   });
 
   // ---------- camera ----------
@@ -305,11 +333,12 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   }
 
   return {
-    k, W, H, d, world, fxLayer, decor, cam: camApi, tokens, traps, star, view, spacePos, spaces, ensureTokens, placeToken, layoutTokens,
+    board, k, W, H, d, world, fxLayer, decor, cam: camApi, tokens, traps, star, view, spacePos, spaces, ensureTokens, placeToken, layoutTokens,
     popup, burst, tokenTop, setStar, setTraps, TOKEN_SIZE,
     setEndspurt: (on) => { view.endspurt = !!on; },
     setTurn: (seat) => { view.turnSeat = seat; },
     setBadge: (n) => { view.badge = n; },
     setMarkers: (m) => { view.markers = m; },
+    setPreview: (p) => { view.preview = p; },
   };
 }

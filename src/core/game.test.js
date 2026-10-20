@@ -134,3 +134,36 @@ test('full bot game: 4 players to the default 9 stars terminates', () => {
   assert.ok(s.endspurt);
   if (process.env.CORE_STATS) console.log('4p/9 stars rounds', s.round);
 });
+
+test('round minigame starts only after EVERY seat has rolled that round; duels never in round 1 or on the start space', () => {
+  registerBoard(makeBoard());
+  for (const players of [2, 3, 4]) {
+    for (let seed = 1; seed <= 8; seed++) {
+      let s = run(lobby(players, { starTarget: 5, seed }), 0, { type: 'startGame' }).state;
+      const rng = createRng(seed);
+      const rolled = new Set();
+      let roundMgs = 0;
+      for (let i = 0; i < 20000 && s.phase !== 'victory'; i++) {
+        let actor, intent;
+        if (s.phase === 'boardTurn') { actor = s.turn.seat; intent = botIntent(s, actor); }
+        else if (s.phase === 'minigameIntro' || s.phase === 'minigameResults') { actor = HOST_SEAT; intent = { type: 'advance' }; }
+        else { actor = HOST_SEAT; intent = { type: 'minigameDone', results: { placements: rng.shuffle(s.minigame.seats).map((x) => [x]) } }; }
+        const r = run(s, actor, intent);
+        for (const e of r.events) {
+          if (e.type === 'roundStarted') rolled.clear();
+          if (e.type === 'diceRolled') rolled.add(e.seat);
+          if (e.type === 'duelStart') {
+            assert.ok(r.state.round >= 2, 'no duel in round 1');
+            assert.notEqual(r.state.players[e.seats[0]].spaceId, 's0', 'no duel on the start space');
+          }
+          if (e.type === 'minigameStart' && e.minigame.purpose === 'round') {
+            roundMgs++;
+            assert.deepEqual([...rolled].sort(), r.state.turnOrder.slice().sort(), `round ${r.state.round}: everyone rolled first`);
+          }
+        }
+        s = r.state;
+      }
+      assert.ok(roundMgs >= 1);
+    }
+  }
+});
