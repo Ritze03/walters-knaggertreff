@@ -30,7 +30,7 @@ const freeze = (o) => { for (const v of Object.values(o)) if (v && typeof v === 
 const en = (...names) => Object.freeze(Object.fromEntries(names.map((n) => [n, n])));
 
 export const APP_ID = 'walters-knaggertreff-v1';   // Trystero appId; local transport channel = `wk:${gameId}`
-export const PROTOCOL_VERSION = 1;                 // bump on any wire/state-shape change; mismatch => reject 'protocol'
+export const PROTOCOL_VERSION = 2;                 // bump on any wire/state-shape change; mismatch => reject 'protocol' (2: + mgOwn)
 export const STATE_VERSION = 1;                    // GameState.version; save with other version => deserialize() returns null
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 6;
@@ -49,6 +49,8 @@ export const TIMING = freeze({
   CLIENT_INPUT_HZ: 30,    // arena/team: client -> host `mgInput`
   HOST_STATE_HZ: 20,      // arena/team: host -> all `mgState`
   HOST_SIM_HZ: 60,        // arena/team: host runs hostStep with fixed dtMs = 1000/60 (accumulator), broadcast every 3rd step
+  OWN_STATE_HZ: 30,       // arena/team owner modules: client -> host `mgOwn` (the owner's own body state; replaces mgInput for that client)
+  OWN_STALE_MS: 500,      // an owner report older than this (host sim ms, mg.t) no longer counts: the seat falls back to the input path and coasts to a stop
   COUNTDOWN_MS: 3000,     // after phase becomes 'minigame': 3-2-1 shown, instance.go() at the end
   MG_GRACE_MS: 2500,      // host waits this long past COUNTDOWN_MS+durationMs for solo finals / ends arena hard
   INTRO_MAX_MS: 20000,    // host sends HostIntent `advance` if not everyone is ready by then
@@ -130,12 +132,13 @@ export function createRng(seed) {
  *  tabs in ONE browser context (BroadcastChannel does not cross isolated Playwright contexts!) get distinct identities.
  *  `?pool=id,id,...` limit the minigame pool to these ids (main.js intersects with the registry; null when absent/empty). Keeps e2e specs robust against new minigames.
  *  @param {string} search e.g. location.search
- *  @returns {{ local:boolean, bot:boolean, seed:(number|null), mg:(string|null), stars:(number|null), coins:(number|null), pid:(string|null), pool:(string[]|null) }} */
+ *  `?lag=ms` test knob: delay every message this peer sends and receives by ms (int clamped to 0..2000; null when absent). Read by main.js, applied by src/net/lag.js.
+ *  @returns {{ local:boolean, bot:boolean, seed:(number|null), mg:(string|null), stars:(number|null), coins:(number|null), pid:(string|null), pool:(string[]|null), lag:(number|null) }} */
 export function parseDebugParams(search = '') {
   const q = new URLSearchParams(search);
   const flag = (n) => q.has(n) && !['0', 'false', 'no'].includes(q.get(n).toLowerCase());
   const int = (n) => { const v = q.get(n); return v !== null && /^-?\d+$/.test(v.trim()) ? parseInt(v, 10) : null; };
-  const seed = int('seed'), stars = int('stars'), coins = int('coins'), mg = q.get('mg'), pid = q.get('pid');
+  const seed = int('seed'), stars = int('stars'), coins = int('coins'), lag = int('lag'), mg = q.get('mg'), pid = q.get('pid');
   const pool = (q.get('pool') ?? '').split(',').map((x) => x.trim()).filter(Boolean);
   return {
     local: flag('local'),
@@ -146,6 +149,7 @@ export function parseDebugParams(search = '') {
     coins: coins !== null && coins >= 0 ? coins : null,
     pid: pid && /^[a-z0-9_-]{1,16}$/i.test(pid) ? pid : null,
     pool: pool.length ? pool : null,
+    lag: lag === null ? null : Math.max(0, Math.min(2000, lag)),
   };
 }
 
@@ -466,9 +470,10 @@ export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'in
  *  mgInput    client -> host      arena/team only, 30 Hz               InputFrame & { seq:number }    (see section 8; host keeps only the latest per seat)
  *  mgProgress any -> all          solo only, 10 Hz                     { t:number /*ms since go*\/, p:Json /*module-defined, enough to draw a thumbnail, <= ~200 bytes*\/ }
  *  mgFinal    any -> all          solo, once when the lane is done     { score:number /*higher wins*\/, label?:string /*e.g. "12,4 s"*\/ }
- *  mgState    host -> all(+self)  arena/team only, 20 Hz               { t:number /*host sim ms*\/, s:Json /*the module's mgState, see section 10*\/ }
+ *  mgState    host -> all(+self)  arena/team only, 20 Hz               { t:number /*host sim ms*\/, s:Json /*the module's mgState, see section 10*\/ }   (+ an immediate extra one when mg.iid changed, see section 10)
+ *  mgOwn      client -> host      arena/team OWNER modules only, 30 Hz  { seq:number, s:Json /*inst.ownState()*\/ }   (REPLACES mgInput for that client; host keeps the latest per seat, derives the seat from `from`)
  */
-export const MSG = en('hello', 'reject', 'intent', 'state', 'mgInput', 'mgProgress', 'mgFinal', 'mgState');
+export const MSG = en('hello', 'reject', 'intent', 'state', 'mgInput', 'mgProgress', 'mgFinal', 'mgState', 'mgOwn');
 /** Session-level events (not on the wire). Same `session.on(name, handler)` as messages, so names never collide with MSG. */
 export const SESSION_EVENT = en('peerJoin', 'peerLeave', 'hostGone', 'hostBack', 'error');
 
@@ -611,7 +616,23 @@ export const FIXED_LINES = freeze({
 // ARENA/TEAM: host simulates. Runner (host) calls hostInit once at go, then hostStep at fixed dt (HOST_SIM_HZ) with the LATEST InputFrame per seat
 //   (frame.pressed edges are consumed: runner clears them after each step), broadcasts mgState at HOST_STATE_HZ, and ends when mgState.done is true or at
 //   COUNTDOWN_MS+durationMs+MG_GRACE_MS hard cap, then calls hostResult. Clients (view 'main' only, no thumbs) get instance.update(mgState) per message and
-//   interpolate in their own root.onUpdate. Clients do not send input themselves: the runner sends mgInput from input.takeFrame().
+//   interpolate in their own root.onUpdate. By default clients do not send input themselves: the runner sends mgInput from input.takeFrame().
+//   OWNER-AUTHORITATIVE MOVEMENT (optional, arena/team; so host lag does not delay a player's own body; friends' game, the host simply trusts the report):
+//     A module opts in by exporting the pure `hostAdopt(mg, seat, report)` AND the instance exporting `ownState()`. The runner then sets ctx.owner = true on
+//     the main instance of every participating human client (not host-run test-mode bots, not thumbs, not spectators; a `?bot` tab IS an owner) and that
+//     client sends `mgOwn {seq, s: inst.ownState()}` at TIMING.OWN_STATE_HZ INSTEAD of mgInput (so discrete presses must travel as SERIAL counters inside
+//     ownState, e.g. `dn` dash count, `jn` jacket count; the host sees a new serial and resolves the action at the reported position).
+//     Host: before each sim batch the runner calls hostAdopt(hs, seat, latestReport) once per connected seat with a fresh, not yet applied report.
+//     hostAdopt (use src/minigames/owner.js adoptFields) whitelists + clamps the owned fields, rejects NaN, sets p.ot = mg.t, and never writes host-owned fields.
+//     hostStep treats a seat as owned while isOwned(p, mg.t) (p.ot within TIMING.OWN_STALE_MS): it skips the input-driven movement of that seat but keeps timers,
+//     dead reckoning, clamps and ALL interactions. Non-owned seats (host bots, disconnected, stale) follow the normal input path.
+//     The client runs the local sim itself (owner.js fixedStepper at 60 Hz) and treats the host snapshot as authoritative only for what the host owns.
+//     IMPULSES (host-resolved hits on an owner's body): the host must not write the victim's kinematics directly. It calls owner.js pushImp(mg, q, seat, {kx, ky, st, dc}),
+//     which appends `{i, s, kx, ky, st, dc}` to `mg.imp` (i = ++mg.iid, s = victim seat, kx/ky knockback velocity add, st = stun ms (max), dc = cancel dash), keeps
+//     entries ~2 s of mg.t, sets the victim's `p.ia = i` and applies the same to the host copy. The runner flushes an extra mgState at once when mg.iid changed.
+//     The victim's update(snap) applies entries with `s === own seat` and `i > lastImp` (owner.js takeImps), and reports `ack = <highest applied i>` in ownState().
+//     Until `report.ack >= p.ia`, adoptFields ignores the kinematic fields of that report (they predate the hit), so the knockback is never overwritten.
+//     On the first snapshot after (re)mount lastImp = the highest id seen (old impulses are not replayed). The remote players are drawn from a delayed buffer (src/minigames/interp.js).
 //   mgState MUST be plain JSON (it is broadcast as-is, keep it small, positions rounded to 1 decimal), host-private (not saved), and MUST contain
 //   `t:number` (sim ms since go, hostStep advances it) and `done:boolean`. hostStep may mutate and return the same object. Absent seats get a zero InputFrame.
 //
@@ -661,6 +682,7 @@ export const FIXED_LINES = freeze({
  *   addAvatar(profile:PlayerProfile, opts?:{ size?:number, showName?:boolean, parent?:any }): any,   // goofy blob (D17), implemented in src/avatar/index.js
  *   sendProgress(p:Json): void, finish(r:{ score:number, label?:string }): void,                       // solo main only; no-ops otherwise
  *   isBot:boolean,
+ *   owner:boolean,                     // arena/team main instance of a human participant in a module with hostAdopt: this client simulates its own body and reports it via ownState() (section 10). False for thumbs, spectators, host-run test bots.
  *   // runner extras (beyond the core fields above):
  *   spectator:boolean, durationMs:number,
  *   rect:{ x:number, y:number, w:number, h:number },   // this lane on the SCREEN (SCREEN.w x SCREEN.h px): solo main = left lane (scaled 0.8 with >3 opponents), thumb = its thumbnail, arena = full
@@ -673,6 +695,7 @@ export const FIXED_LINES = freeze({
  *   go(): void,                        // countdown finished: start simulating/accepting input (before that: draw the scene frozen). Ignored by thumbs.
  *   update(data:Json): void,           // thumb: that seat's latest progress `p`. arena/team main: latest host mgState. solo main: never called.
  *   botInput(): Partial<InputState>,   // ?bot: sensible input NOW (runner injects it every frame via input.inject). Reads the instance's own sim/snapshot. Not required on thumbs.
+ *   ownState?(): Json,                 // owner modules only (ctx.owner): the report the runner sends as `mgOwn.s` at OWN_STATE_HZ: owned kinematic fields (rounded), discrete-action serial counters, `ack`. Must be small plain JSON.
  *   destroy(): void,
  * }} MinigameInstance */
 
@@ -687,6 +710,7 @@ export const FIXED_LINES = freeze({
  *   hostInit?(o:{ seats:number[], seed:number, rng:Rng, mode:Mode, teams:(number[][]|null) }): ArenaState,   // arena/team only
  *   hostStep?(mg:ArenaState, inputsBySeat:Object<string,InputFrame>, dtMs:number): ArenaState,               // arena/team only
  *   hostResult?(mg:ArenaState): MinigameResults,                                                             // arena/team only
+ *   hostAdopt?(mg:ArenaState, seat:number, report:Json): void,   // optional, arena/team: opt in to owner-authoritative movement (pure; apply the seat's ownState report to mg, see section 10 and owner.js adoptFields)
  * }} MinigameModule */
 /** @typedef {{ t:number, done:boolean, [k:string]:Json }} ArenaState */
 

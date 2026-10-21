@@ -36,5 +36,8 @@ test('moduleProblem catches the usual mistakes', () => {
   assert.match(moduleProblem({ ...ok, id: 'quatsch' }, 'quatsch'), /MINIGAMES/);
   assert.match(moduleProblem({ ...ok, id: 'ordnungsamt' }, 'ordnungsamt'), /hostInit/);
   assert.match(moduleProblem({ ...ok, durationMs: 0 }, 'forza'), /durationMs/);
+  assert.match(moduleProblem({ ...ok, hostAdopt: true }, 'forza'), /hostAdopt/);
+  assert.match(moduleProblem({ ...ok, hostAdopt: 'yes' }, 'forza'), /hostAdopt/);
+  assert.equal(moduleProblem({ ...ok, hostAdopt() {} }, 'forza'), null);
   assert.match(moduleProblem(undefined, 'forza'), /default export/);
 });
