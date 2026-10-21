@@ -80,10 +80,9 @@ function mountMain(ctx) {
   let t3 = null, live = false, over = false, finished = false, wall0 = 0, tSummit = 0;
   const loading = label(k, root, 'Der Knaggerturm wackelt sich auf…', 480, 360, { size: 34, outline: [5, '#14182a'] });
 
-  // camera-relative controls: the camera sits OUTSIDE the tower, behind the blob, and follows its angle around the axis
+  // the camera sits OUTSIDE the tower, behind the blob, and follows its angle around the axis. Controls: left / right only (screen-right = clockwise round the
+  // tower); the depth axis is automatic (sim.assistMove, applied inside step() for humans and bots alike)
   let camAng = Math.atan2(st.z, st.x);
-  const fwd = { x: -Math.cos(camAng), z: -Math.sin(camAng) }, right = { x: Math.sin(camAng), z: -Math.cos(camAng) };
-  const setBasis = () => { fwd.x = -Math.cos(camAng); fwd.z = -Math.sin(camAng); right.x = Math.sin(camAng); right.z = -Math.cos(camAng); };
 
   let lastKey = '', lastSay = -99, lastFall = -99, saidHalf = false, hintT = 0;
   const say = (key, gap = 3.5) => {
@@ -147,7 +146,7 @@ function mountMain(ctx) {
     const timeEl = t.label('', { x: 480, y: 18, size: 44, align: 'center' });
     const banner = t.label('', { x: 480, y: 250, size: 72, align: 'center', color: '#ffe066' });
     banner.style.opacity = '0';
-    const hintEl = t.label('WASD / Stick: Laufen  ·  Leertaste / A: Springen', { x: 480, y: 676, size: 22, align: 'center' });
+    const hintEl = t.label('A / D (← →) / Stick: um den Turm laufen  ·  Leertaste / A: Springen', { x: 480, y: 676, size: 22, align: 'center' });
     const bar = document.createElement('div');
     bar.style.cssText = `position:absolute;left:${px(918)};top:${px(110)};width:${px(14)};height:${px(520)};background:rgba(20,24,42,.55);border:${px(3)} solid #fff;border-radius:${px(9)}`;
     const bestTick = document.createElement('div');
@@ -167,14 +166,11 @@ function mountMain(ctx) {
     if (ctx.isBot) globalThis.__onlyup = { THREE, scene: t.scene, camera, st, course, player: me.group, world, occl };   // e2e / debugging only
     t.onFrame((dt) => {
       time += dt;
-      // controls: the stick is relative to the camera
-      let dx = 0, dz = 0;
+      // controls: left / right (A/D, arrows, stick X) + jump
+      let axis = 0;
       if (live && !over) {
-        const m = input.state.move, len = Math.min(1, Math.hypot(m.x, m.y));
-        if (len > 0.05) {
-          const wx = right.x * m.x - fwd.x * m.y, wz = right.z * m.x - fwd.z * m.y, l = Math.hypot(wx, wz) || 1;
-          dx = (wx / l) * len; dz = (wz / l) * len;
-        }
+        const m = input.state.move;
+        axis = Math.abs(m.x) > 0.12 ? Math.max(-1, Math.min(1, m.x)) : 0;
         if (input.pressed('jump')) jumpLatch = true;
       } else jumpLatch = false;
 
@@ -183,7 +179,7 @@ function mountMain(ctx) {
         let guard = 0;
         while (acc >= C.DT && guard++ < 30) {
           acc -= C.DT;
-          const evs = step(st, course, { dx, dz, jump: jumpLatch }, C.DT);
+          const evs = step(st, course, { axis, jump: jumpLatch }, C.DT);
           jumpLatch = false;
           const bestBefore = st.best;
           for (const e of evs) {
@@ -222,7 +218,6 @@ function mountMain(ctx) {
       const horiz = Math.hypot(st.x, st.z);
       if (horiz > 1.8) camAng += angDiff(Math.atan2(st.z, st.x), camAng) * ease(dt, 3.2);
       if (st.done) camAng += dt * 0.5;
-      setBasis();
       viewY += (st.y - viewY) * ease(dt, st.vy < -8 ? 7 : 4.5);
 
       // blob
@@ -286,7 +281,7 @@ function mountMain(ctx) {
     botInput() {
       if (!t3 || !live || over) return {};
       const c = botControl(st, course, bot, BOT_NOISE, k.dt());
-      return { move: { x: c.dx * right.x + c.dz * right.z, y: -(c.dx * fwd.x + c.dz * fwd.z) }, jump: c.jump };
+      return { move: { x: c.axis, y: 0 }, jump: c.jump };
     },
     destroy() { t3?.destroy(); },
   };
