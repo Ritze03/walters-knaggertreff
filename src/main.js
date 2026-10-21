@@ -125,7 +125,7 @@ function showTitle(message = '') {
 
 function startRun({ gameId, profile, isHost, initial = null }) {
   const full = { ...profile, playerId };
-  const session = createSession({ gameId, transport: debug.local ? 'local' : 'trystero', profile: full, playerId, isHost, isBot: debug.bot });
+  const session = createSession({ gameId, transport: debug.local ? 'local' : 'trystero', profile: full, playerId, isHost, isBot: debug.bot, lagMs: debug.lag ?? 0 });
   const offs = [];
   const timers = new Set();
   let stopped = false;

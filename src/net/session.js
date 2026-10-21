@@ -2,15 +2,18 @@
 import { MSG, SESSION_EVENT, PROTOCOL_VERSION } from '../contracts.js';
 import { createTransport as createLocal } from './transports/local.js';
 import { createTransport as createTrystero } from './transports/trystero.js';
+import { withLag } from './lag.js';
 
 export const HEARTBEAT_MS = 1000;   // every session broadcasts a tiny `hb` this often
 export const SILENCE_MS = 5000;     // a peer we have heard NOTHING from (any message incl. hb) for this long is treated as left
 const HB = 'hb';                    // session-internal action, not part of MSG
 
-export function createSession({ gameId, transport, profile, playerId, isHost, isBot = false }) {
+export function createSession({ gameId, transport, profile, playerId, isHost, isBot = false, lagMs = 0 }) {
   const types = [...Object.values(MSG), HB];
   // `transport` may also be a ready-made Transport object (tests wrap one to simulate a dead peer)
-  const link = typeof transport !== 'string' ? transport : transport === 'local' ? createLocal(gameId) : createTrystero(gameId, types);
+  const rawLink = typeof transport !== 'string' ? transport : transport === 'local' ? createLocal(gameId) : createTrystero(gameId, types);
+  // lagMs (debug ?lag=): delay this tab's network traffic both ways. The host's own loopback below (sendToHost / broadcast self) never touches the link, so it stays instant, as in reality.
+  const link = withLag(rawLink, lagMs);
 
   const handlers = new Map();   // type -> Set<handler>
   const peers = new Map();      // transport peerId -> { lastSeen, info: PeerInfo|null }  (info stays null until the peer's hello arrives)

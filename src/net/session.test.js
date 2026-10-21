@@ -226,6 +226,37 @@ test('a silent host (tab killed, no clean leave) is detected as gone, and back w
   assert.equal(a.hostPlayerId(), 'host');
 });
 
+test('lagMs: a lagged session still connects and delivers, delayed both ways; the host loopback stays instant', { timeout: 15000 }, async () => {
+  const LAG = 150;
+  const g = gameIdOf();
+  const host = createSession({ gameId: g, transport: 'local', profile: profileOf('host'), playerId: 'host', isHost: true, lagMs: LAG });
+  open.push(host);
+  const a = make(g, 'alice');
+  const atHost = record(host, MSG.intent), atAlice = record(a, MSG.state);
+  await until(() => a.hostPlayerId() === 'host' && host.peers().length === 1, 5000);
+
+  // the host's own loopback is a microtask, not delayed
+  host.sendToHost(MSG.intent, { intent: 'self' });
+  await wait(20);
+  assert.equal(atHost.length, 1);
+
+  // client -> lagged host: arrives late
+  const t0 = Date.now();
+  a.sendToHost(MSG.intent, { intent: 'x' });
+  await until(() => atHost.length === 2, 3000);
+  assert.ok(Date.now() - t0 >= LAG - 10, `inbound delayed ${Date.now() - t0}ms`);
+
+  // lagged host -> client: arrives late
+  const t1 = Date.now();
+  host.broadcast(MSG.state, { n: 1 });
+  await until(() => atAlice.length === 1, 3000);
+  assert.ok(Date.now() - t1 >= LAG - 10, `outbound delayed ${Date.now() - t1}ms`);
+
+  // ping measured through the lagged session = real RTT + 2*lag
+  const rtt = await host.ping('alice');
+  assert.ok(rtt >= 2 * LAG && rtt < 2 * LAG + 150, `rtt ${rtt}`);
+});
+
 test('identity: stable playerId, profile round trip, host marker, saves (with and without storage)', () => {
   assert.doesNotThrow(() => loadIdentity());   // no localStorage in node
   const idNoStorage = loadIdentity('nostore');
