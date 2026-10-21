@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng } from '../../contracts.js';
-import { C, DURATION_MS, BOT_NOISE, makeCourse, newState, step, botControl, over, supportBelow } from './sim.js';
+import { C, DURATION_MS, BOT_NOISE, makeCourse, newState, step, botControl, over, supportBelow, angDiff } from './sim.js';
 
 /** plays `sec` seconds with the bot; returns { st, falls, summitAt (s or null), course } */
 function play(seed, noise, sec = DURATION_MS / 1000) {
@@ -96,4 +96,71 @@ test('over() and supportBelow() agree with landing', () => {
 test('state stays plain JSON', () => {
   const r = play(2, BOT_NOISE, 5);
   assert.equal(JSON.stringify(JSON.parse(JSON.stringify(r.st))), JSON.stringify(r.st));
+});
+
+// ---- controls: only left / right + jump; the depth axis is automatic (assistMove)
+import { assistMove } from './sim.js';
+
+test('assistMove: no input = no movement; right is clockwise round the tower and the radial part pulls onto the route', () => {
+  const course = makeCourse(createRng(4));
+  const st = newState(course);
+  assert.deepEqual(assistMove(st, course, 0), { dx: 0, dz: 0 });
+  const p = course.plats[2];
+  Object.assign(st, { x: p.x, z: p.z, y: p.top, grounded: true, on: 2, ref: 2, stand: p.top });
+  const th = Math.atan2(st.z, st.x), cw = { x: Math.sin(th), z: -Math.cos(th) };
+  const m = assistMove(st, course, 1), l = assistMove(st, course, -1);
+  assert.ok(m.dx * cw.x + m.dz * cw.z > 0.95, 'right = clockwise');
+  assert.ok(l.dx * cw.x + l.dz * cw.z < -0.95, 'left = counter-clockwise');
+  assert.ok(Math.hypot(m.dx, m.dz) <= 1.0001);
+  // pushed 1.5 m outwards of the route: holding right also moves it inwards; pushed inwards, outwards
+  const r0 = Math.hypot(p.x, p.z);
+  Object.assign(st, { x: Math.cos(th) * (r0 + 1.5), z: Math.sin(th) * (r0 + 1.5) });
+  const out = assistMove(st, course, 1);
+  assert.ok(out.dx * Math.cos(th) + out.dz * Math.sin(th) < -0.3, 'pulled inwards');
+  Object.assign(st, { x: Math.cos(th) * (r0 - 1.0), z: Math.sin(th) * (r0 - 1.0) });
+  const inn = assistMove(st, course, 1);
+  assert.ok(inn.dx * Math.cos(th) + inn.dz * Math.sin(th) > 0.3, 'pulled outwards');
+  // a half stick is a half speed
+  assert.ok(Math.hypot(assistMove({ ...st, x: p.x, z: p.z }, course, 0.5).dx, assistMove({ ...st, x: p.x, z: p.z }, course, 0.5).dz) < 0.55);
+});
+
+/** a "player": holds right (D) all the time and presses jump at the last moment before running off the platform it stands on. No depth input at all. */
+function holdRight(seed, sec) {
+  const course = makeCourse(createRng(seed));
+  const st = newState(course);
+  let jumped = false;
+  for (let i = 0; i < sec / C.DT && !st.done; i++) {
+    const cur = st.on >= 0 ? course.plats[st.on] : null;
+    const edge = st.grounded && (!cur || !over(cur, st.x + st.vx * 0.09, st.z + st.vz * 0.09, -0.1));
+    const jump = st.grounded && edge && !jumped;
+    jumped = jump;
+    step(st, course, { axis: 1, jump });
+  }
+  return { st, course };
+}
+
+test('with only right + jump (no depth input) a runner climbs well past platform 5 on every seed', () => {
+  for (let seed = 1; seed <= 30; seed++) {
+    const { st, course } = holdRight(seed, 25);
+    assert.ok(st.bestOn >= 5, `seed ${seed}: only reached platform ${st.bestOn} (${st.best.toFixed(1)} of ${course.top.toFixed(1)} m)`);
+  }
+});
+
+test('steering along a platform keeps the blob on the line through the platform centre (no sideways drift off narrow benches)', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const course = makeCourse(createRng(seed));
+    for (const i of [1, 3, 6, 9]) {
+      const p = course.plats[i];
+      // start 0.6 m counter-clockwise of the centre and 0.5 m too far out, hold right while still on the platform
+      const th = Math.atan2(p.z, p.x) + 0.6 / p.rad, r0 = p.rad + 0.5;
+      const st = newState(course);
+      Object.assign(st, { x: Math.cos(th) * r0, z: Math.sin(th) * r0, y: p.top, grounded: true, on: i, ref: i, stand: p.top });
+      let worst = 0;
+      for (let k = 0; k < 0.4 / C.DT && st.on === i; k++) {
+        step(st, course, { axis: 1, jump: false });
+        if (st.on === i && k > 0.15 / C.DT && Math.abs(angDiff(Math.atan2(st.z, st.x), p.ang)) * p.rad < 0.6 * p.e) worst = Math.max(worst, Math.abs(Math.hypot(st.x, st.z) - p.rad));
+      }
+      assert.ok(worst < 0.35, `seed ${seed} platform ${i}: ${worst.toFixed(2)} m off the line after the first 0.15 s`);
+    }
+  }
 });

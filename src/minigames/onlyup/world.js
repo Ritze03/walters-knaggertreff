@@ -253,13 +253,8 @@ export function buildWorld(THREE, scene, course, rng) {
         }
         break;
       }
-      case 'bottle': {   // the summit: a Mate bottle with its crown cap on top (the cap is the platform). Slim and short: it hangs right next to the last platforms of the climb.
-        const dark = lam(0x2d4b2a);
+      case 'summit': {   // the summit: a plain silver cap platform with the flag on it (no bottle underneath: it only ever blocked the view)
         g.add(cyl(p.r, p.r * 0.92, T, [lam(0xc9d0d8), lam(0xe8edf2), lam(0xc9d0d8)], 20, 0, -T / 2, 0));
-        g.add(cyl(0.9, 1.2, 1.6, dark, 16, 0, -T - 0.8, 0));
-        g.add(cyl(2.0, 1.2, 1.6, dark, 16, 0, -T - 2.4, 0));
-        g.add(cyl(2.0, 2.0, 5.2, dark, 20, 0, -T - 5.8, 0));
-        g.add(cyl(2.04, 2.04, 2.2, lam(0xf2d03b), 20, 0, -T - 5.8, 0));
         // flag
         g.add(cyl(0.06, 0.06, 3, lam(0xeeeeee), 6, 1.6, 1.5, 0));
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.0), new THREE.MeshBasicMaterial({ color: 0xff3d5a, side: THREE.DoubleSide }));

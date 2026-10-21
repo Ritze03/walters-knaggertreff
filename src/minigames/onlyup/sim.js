@@ -1,6 +1,9 @@
 // "Knaggerturm" (solo, 3D): pure course + physics. No Kaplay, no three, no Math.random: every client builds the SAME tower from ctx.rng and simulates
 // its own blob locally. Units are metres, y is up, the tower axis is x = z = 0. Platforms are one-way (you jump up through them and land on top).
-// The client (client.js) draws it with three.js and feeds step() with a camera-relative move direction; botControl() steers the ?bot.
+// CONTROLS: the player only steers left / right (inp.axis -1..1, A/D, arrows, stick X) plus jump. assistMove() turns that into a world move direction:
+// "right" runs clockwise round the tower (the way the spiral winds, and screen-right for the camera that follows the blob), and the radial / depth
+// part is automatic: it eases the blob onto the line through the platform it stands on and the next (or previous) one. Same rules for humans and bots.
+// The client (client.js) draws it with three.js and feeds step() with {axis, jump}; botControl() steers the ?bot with the same {axis, jump}.
 
 export const DURATION_MS = 45000;
 export const BOT_NOISE = 1.3;   // the ?bot: a bit early/late, a bit off-centre, now and then a plain misjudgement
@@ -13,6 +16,7 @@ export const C = {
   SPLAT_DROP: 4.5,                 // a fall of at least this many metres (to a lower platform / the ground) is a "splat"
   GROUND_R: 24,                    // the street around the tower; the sim clamps the blob inside
   DT: 1 / 120,
+  ASSIST_LEAD: 0.15, ASSIST_GAIN: 2.5, ASSIST_HOLD: 0.9,   // assistMove: look-ahead (rad), radial pull per metre of error, share of a platform's half extent over which the route radius is held (tuned with the bot on 400 seeds)
   N: 28,                           // platforms including the summit
 };
 
@@ -27,7 +31,7 @@ export const KINDS = {
   cap:     { shape: 'round', r: 1.2,   thick: 0.35 },             // Kronkorken
 };
 const KIND_LIST = Object.keys(KINDS);
-export const SUMMIT = { kind: 'bottle', shape: 'round', r: 2.5, thick: 0.5 };   // giant Mate bottle with its cap as the top platform
+export const SUMMIT = { kind: 'summit', shape: 'round', r: 2.5, thick: 0.5 };   // the silver cap platform on top (with a flag)
 
 const TAU = Math.PI * 2;
 const angDiff = (a, b) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
@@ -41,7 +45,7 @@ export function makeCourse(rng) {
   for (let i = 0; i < C.N; i++) {
     const last = i === C.N - 1;
     let kind;
-    if (last) kind = 'bottle';
+    if (last) kind = 'summit';
     else { do { kind = KIND_LIST[rng.int(0, KIND_LIST.length - 1)]; } while (kind === prevKind); }
     prevKind = kind;
     const def = last ? SUMMIT : KINDS[kind];
@@ -65,7 +69,35 @@ export function makeCourse(rng) {
   // start: on the street, beside the first platform
   const p0 = plats[0];
   const sa = p0.ang + 0.55;
-  return { plats, top: plats[plats.length - 1].top, start: { x: Math.cos(sa) * 5.4, z: Math.sin(sa) * 5.4 } };
+  // the climbing route as (angle, radius) points: the start spot on the street, then every platform centre (assistMove follows its polyline)
+  const route = [{ ang: sa, rad: 5.4, e: 0 }, ...plats.map((p) => ({ ang: p.ang, rad: p.rad, e: p.e }))];
+  return { plats, route, top: plats[plats.length - 1].top, start: { x: Math.cos(sa) * 5.4, z: Math.sin(sa) * 5.4 } };
+}
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/**
+ * Left / right input -> world move direction {dx, dz} (length <= 1). axis > 0 = clockwise round the tower (screen-right), < 0 = counter-clockwise.
+ * While steering, the radial part (the old W/S) pulls the blob onto the route: the radius is interpolated by angle between the centre of the platform it
+ * last stood on (st.ref, -1 = street) and the next one (when it is clockwise of it) or the previous one (counter-clockwise). No input = no movement at all.
+ */
+export function assistMove(st, course, axis) {
+  const a = clamp(axis || 0, -1, 1);
+  const r = Math.hypot(st.x, st.z);
+  if (Math.abs(a) < 0.05 || r < 0.5) return { dx: 0, dz: 0 };
+  const th = Math.atan2(st.z, st.x);
+  const R = course.route, i = Math.min(R.length - 1, Math.max(0, (st.ref ?? -1) + 1)), cur = R[i];
+  const look = angDiff(th - Math.sign(a) * C.ASSIST_LEAD, cur.ang);   // the radius is read a bit AHEAD along the way, so the blob is on the line when it gets there
+  const nxt = look <= 0 ? R[i + 1] : R[i - 1];
+  let want = cur.rad;
+  if (nxt) {   // stay on the line through the platform's centre while the blob is over it; slide over to the next radius in the gap between the two
+    const t = clamp(look / angDiff(nxt.ang, cur.ang), 0, 1), d = cur.e + nxt.e + 1.5, t0 = (cur.e * C.ASSIST_HOLD) / d, t1 = 1 - (nxt.e * C.ASSIST_HOLD) / d;
+    want += (nxt.rad - cur.rad) * clamp((t - t0) / (t1 - t0), 0, 1);
+  }
+  const c = clamp((want - r) * C.ASSIST_GAIN, -1, 1) * Math.abs(a);
+  const tx = Math.sin(th), tz = -Math.cos(th), ex = Math.cos(th), ez = Math.sin(th);
+  const dx = a * tx + c * ex, dz = a * tz + c * ez, l = Math.hypot(dx, dz);
+  return l > 1 ? { dx: dx / l, dz: dz / l } : { dx, dz };
 }
 
 /** is the point (x, z) over platform p's top face (grown by `m`)? */
@@ -86,11 +118,11 @@ export function supportBelow(course, x, z, y) {
 
 export function newState(course) {
   return { x: course.start.x, y: 0, z: course.start.z, vx: 0, vy: 0, vz: 0, grounded: true, on: -1, coyote: 0, buf: 0, best: 0, bestOn: -1, t: 0, done: false,
-    stand: 0, fx: 0, fz: 0 };
+    stand: 0, fx: 0, fz: 0, ref: -1 };
 }
 
 /**
- * One fixed step. inp = { dx, dz (world move direction, length <= 1), jump (a press happened) }.
+ * One fixed step. inp = { axis (-1..1, left / right: see assistMove) or dx, dz (a raw world move direction, length <= 1), jump (a press happened) }.
  * Returns an array of events: 'jump', 'land' {drop}, 'splat' {drop}, 'summit'. Mutates st.
  */
 export function step(st, course, inp, dt = C.DT) {
@@ -98,6 +130,7 @@ export function step(st, course, inp, dt = C.DT) {
   if (st.done) { st.vx = st.vz = 0; return ev; }
   st.t += dt;
   st.buf = inp.jump ? C.BUFFER : Math.max(0, st.buf - dt);
+  if (inp.axis !== undefined) inp = { ...inp, ...assistMove(st, course, inp.axis) };
 
   // horizontal: snappy on the ground, softer in the air (a little air control, never none)
   const tx = inp.dx * C.SPEED, tz = inp.dz * C.SPEED;
@@ -139,7 +172,7 @@ export function step(st, course, inp, dt = C.DT) {
         if (p.top > landTop && p.top <= prevY + 0.08 && st.y <= p.top && over(p, st.x, st.z)) { land = p.i; landTop = p.top; }
       }
       if (land !== null) {
-        st.y = landTop; st.vy = 0; st.grounded = true; st.on = land; st.coyote = 0;
+        st.y = landTop; st.vy = 0; st.grounded = true; st.on = land; st.ref = land; st.coyote = 0;
         const drop = st.stand - landTop;
         if (drop >= C.SPLAT_DROP) ev.push({ type: 'splat', drop });
         else ev.push({ type: 'land', drop });
@@ -156,7 +189,7 @@ export function step(st, course, inp, dt = C.DT) {
 }
 
 /**
- * Bot steering: returns {dx, dz, jump}. `bot` is a per-bot memory {rng, aim, noise}. It aims at the next platform and jumps when it thinks it is in range;
+ * Bot steering: returns {axis, jump} (the same left / right + jump a player has). `bot` is a per-bot memory {rng, aim, noise}. It aims at the next platform and jumps when it thinks it is in range;
  * noise makes it a bit early/late and a bit off-centre, so it sometimes misses and falls. noise 0 = a clean run (used by the tests).
  */
 export function botControl(st, course, bot, noise = 1, dt = C.DT) {
@@ -172,7 +205,7 @@ export function botControl(st, course, bot, noise = 1, dt = C.DT) {
     bot.dumb = bot.rng.next() < 0.14 * noise;                              // occasionally just misjudges it badly
     bot.wait = noise * (0.1 + bot.rng.next() * 0.45);                             // little hesitation before the run-up
   }
-  if (bot.wait > 0) { bot.wait -= dt; return { dx: 0, dz: 0, jump: false }; }
+  if (bot.wait > 0) { bot.wait -= dt; return { axis: 0, jump: false }; }
   const lim = tgt.shape === 'round' ? tgt.r * 0.6 : Math.min(tgt.hw, tgt.hd * 1.6) * 0.55;
   let ax = tgt.x + bot.off.x, az = tgt.z + bot.off.z;
   const ox = ax - tgt.x, oz = az - tgt.z, ol = Math.hypot(ox, oz);
@@ -188,5 +221,7 @@ export function botControl(st, course, bot, noise = 1, dt = C.DT) {
   const atEdge = cur && !over(cur, st.x + st.vx * 0.09, st.z + st.vz * 0.09, -0.1);   // about to run off: take the jump now
   if (st.grounded && (atEdge || d <= reach * 0.78 * bot.early * (bot.dumb ? 1.35 : 1))) jump = !bot.jumped;
   bot.jumped = jump;
-  return { dx: dx / (d || 1), dz: dz / (d || 1), jump };
+  // left / right = the shorter way round the tower to the aim point's angle (clockwise = +)
+  const th = Math.atan2(st.z, st.x), arc = -angDiff(Math.atan2(az, ax), th) * Math.hypot(st.x, st.z);
+  return { axis: clamp(arc * 1.5, -1, 1), jump };
 }
