@@ -110,18 +110,19 @@ export function buildWorld(THREE, scene, course, rng) {
   const asphalt = new THREE.Mesh(new THREE.CircleGeometry(95, 40), lam(0x4a4e58));
   asphalt.rotation.x = -Math.PI / 2;
   scene.add(asphalt);
+  const ground = new Set([asphalt]);   // flat street parts: never fade, never count as "in the way" (see makeOcclusion)
   const plaza = new THREE.Mesh(new THREE.CircleGeometry(15, 40), lam(0x9b9ca3));
   plaza.rotation.x = -Math.PI / 2; plaza.position.y = 0.02;
-  scene.add(plaza);
+  scene.add(plaza); ground.add(plaza);
   const kerb = new THREE.Mesh(new THREE.RingGeometry(15, 15.8, 40), lam(0xd5d3cb));
   kerb.rotation.x = -Math.PI / 2; kerb.position.y = 0.03;
-  scene.add(kerb);
+  scene.add(kerb); ground.add(kerb);
   const dash = lam(0xf4f1e6);
   for (let i = 0; i < 28; i++) {
     const a = (i / 28) * Math.PI * 2;
     const d = box(2.4, 0.02, 0.45, dash, Math.cos(a) * 25.5, 0.03, Math.sin(a) * 25.5);
     d.rotation.y = -a + Math.PI / 2;
-    scene.add(d);
+    scene.add(d); ground.add(d);
   }
   // Pflastersteine-ish patches on the plaza
   const patch = lam(0x888a91);
@@ -129,7 +130,7 @@ export function buildWorld(THREE, scene, course, rng) {
     const a = rng.next() * Math.PI * 2, r = 3 + rng.next() * 10;
     const m = box(1.6 + rng.next(), 0.02, 1.2 + rng.next(), patch, Math.cos(a) * r, 0.035, Math.sin(a) * r);
     m.rotation.y = rng.next() * 3;
-    scene.add(m);
+    scene.add(m); ground.add(m);
   }
 
   // ---- skyline: Plattenbau blocks with window rows, a Fernsehturm
@@ -150,10 +151,12 @@ export function buildWorld(THREE, scene, course, rng) {
   ball.position.set(tvx, 78, tvz);
   scene.add(cyl(0.12, 0.5, 26, lam(0xd9453b), 8, tvx, 97, tvz));
 
-  // ---- Spaeti + U-Bahn sign on the plaza
+  // ---- Spaeti + U-Bahn sign on the street. Decoration keeps well clear of the camera's path (it follows the blob up the tower at 9.6 m behind it, so it
+  // stays within ~17 m of the axis): they stand out on the asphalt, beyond the 24 m the blob may walk, facing the tower.
   const sp = new THREE.Group();
-  sp.position.set(Math.cos(course.plats[0].ang + 1.5) * 12, 0, Math.sin(course.plats[0].ang + 1.5) * 12);
-  sp.rotation.y = -(course.plats[0].ang + 1.5) + Math.PI / 2;
+  const SP_R = 27.5;
+  sp.position.set(Math.cos(course.plats[0].ang + 1.5) * SP_R, 0, Math.sin(course.plats[0].ang + 1.5) * SP_R);
+  sp.rotation.y = -(course.plats[0].ang + 1.5) - Math.PI / 2;
   sp.add(box(7, 3.4, 3.4, lam(0xe9dcc2), 0, 1.7, 0), box(7.4, 0.5, 4.2, lam(0xe8b730), 0, 3.6, 0.3));
   sp.add(box(5.4, 1.9, 0.12, lam(0x9fd0e8), 0, 1.5, 1.75));
   const sign = textSprite(THREE, 'SPÄTI', { w: 256, h: 96, font: 70, color: '#ffd84a', scale: 2.6 });
@@ -162,7 +165,8 @@ export function buildWorld(THREE, scene, course, rng) {
   scene.add(sp);
   const ub = new THREE.Group();
   const ua = course.plats[0].ang - 1.4;
-  ub.position.set(Math.cos(ua) * 12.5, 0, Math.sin(ua) * 12.5);
+  ub.position.set(Math.cos(ua) * 26.5, 0, Math.sin(ua) * 26.5);
+  ub.rotation.y = -ua - Math.PI / 2;
   ub.add(cyl(0.1, 0.1, 4, lam(0x555a66), 8, 0, 2, 0), box(1.3, 1.3, 0.12, lam(0x1b5fb5), 0, 4.2, 0));
   const u = textSprite(THREE, 'U', { w: 64, h: 64, font: 56, scale: 1.1 });
   u.position.set(0, 4.2, 0.12);
@@ -181,8 +185,9 @@ export function buildWorld(THREE, scene, course, rng) {
       s.scale.y = 0.6;
       g.add(s);
     }
-    const a = rng.next() * Math.PI * 2, r = 22 + rng.next() * 55;
-    g.position.set(Math.cos(a) * r, 6 + rng.next() * 62, Math.sin(a) * r);
+    // they drift along x on a fixed z lane: |z| >= 26 keeps every lane (cloud half-width ~5) well outside the camera's ~17 m orbit around the tower axis
+    const zLane = (rng.next() < 0.5 ? -1 : 1) * (26 + rng.next() * 44);
+    g.position.set((rng.next() - 0.5) * 160, 6 + rng.next() * 62, zLane);
     g.userData.speed = 0.4 + rng.next() * 0.7;
     scene.add(g);
     clouds.push(g);
@@ -248,15 +253,13 @@ export function buildWorld(THREE, scene, course, rng) {
         }
         break;
       }
-      case 'bottle': {   // the summit: a giant Mate bottle with its crown cap on top
+      case 'bottle': {   // the summit: a Mate bottle with its crown cap on top (the cap is the platform). Slim and short: it hangs right next to the last platforms of the climb.
+        const dark = lam(0x2d4b2a);
         g.add(cyl(p.r, p.r * 0.92, T, [lam(0xc9d0d8), lam(0xe8edf2), lam(0xc9d0d8)], 20, 0, -T / 2, 0));
-        g.add(cyl(1.3, 1.9, 2.6, lam(0x2d4b2a), 16, 0, -T - 1.3, 0));
-        g.add(cyl(3.0, 2.0, 2.2, lam(0x2d4b2a), 16, 0, -T - 3.6, 0));
-        g.add(cyl(3.0, 3.0, 9, lam(0x2d4b2a), 20, 0, -T - 8.2, 0));
-        g.add(cyl(3.04, 3.04, 3.6, lam(0xf2d03b), 20, 0, -T - 8.2, 0));
-        const lab = textSprite(THREE, 'MATE', { w: 256, h: 96, font: 80, color: '#2d4b2a', stroke: '#f2d03b', scale: 3.4 });
-        lab.position.set(0, -T - 8.2, 0);
-        g.add(lab);
+        g.add(cyl(0.9, 1.2, 1.6, dark, 16, 0, -T - 0.8, 0));
+        g.add(cyl(2.0, 1.2, 1.6, dark, 16, 0, -T - 2.4, 0));
+        g.add(cyl(2.0, 2.0, 5.2, dark, 20, 0, -T - 5.8, 0));
+        g.add(cyl(2.04, 2.04, 2.2, lam(0xf2d03b), 20, 0, -T - 5.8, 0));
         // flag
         g.add(cyl(0.06, 0.06, 3, lam(0xeeeeee), 6, 1.6, 1.5, 0));
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.0), new THREE.MeshBasicMaterial({ color: 0xff3d5a, side: THREE.DoubleSide }));
@@ -270,8 +273,12 @@ export function buildWorld(THREE, scene, course, rng) {
     plat.push({ i: p.i, group: g, dip: 0, baseY: p.top, rx: 0, rz: 0 });
   }
 
+  // everything the camera can get stuck behind: every solid mesh except the flat street
+  const occluders = [];
+  scene.traverse((o) => { if (o.isMesh && !ground.has(o) && o.material.type !== 'MeshBasicMaterial') occluders.push(o); });
+
   return {
-    plat,
+    plat, occluders,
     bump(i, amount = 0.2) { if (plat[i]) plat[i].dip = amount; },
     update(dt, time) {
       for (const e of plat) {
@@ -283,6 +290,79 @@ export function buildWorld(THREE, scene, course, rng) {
       for (const c of clouds) {
         c.position.x += c.userData.speed * dt;
         if (c.position.x > 80) c.position.x = -80;
+      }
+    },
+  };
+}
+
+/**
+ * Keeps the blob visible: every frame, rays go from the camera to a few points on the blob (feet, chest, head, both sides, name tag); each mesh in
+ * `meshes` they hit, or that the camera is practically inside of, fades to `alpha` and fades back when it no longer is in the way. Each fading mesh gets
+ * its OWN material clones (many meshes share a material); the original goes back on once the fade is over, so nothing stays transparent (no sorting / overdraw).
+ * Render-only: never touches the sim. update(dt, pos) takes the blob's feet position.
+ */
+export function makeOcclusion(THREE, camera, meshes, { alpha = 0.25, rate = 14 } = {}) {
+  const rc = new THREE.Raycaster();
+  rc.camera = camera;
+  const items = meshes.map((mesh) => {
+    if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
+    return { mesh, orig: mesh.material, clones: null, a: 1, base: [].concat(mesh.material).map((m) => m.opacity) };
+  });
+  const byMesh = new Map(items.map((it) => [it.mesh, it]));
+  const from = new THREE.Vector3(), dir = new THREE.Vector3(), c = new THREE.Vector3(), side = new THREE.Vector3();
+  const pts = [0, 1, 2, 3, 4, 5].map(() => new THREE.Vector3());
+  const hit = new Set();
+
+  function setAlpha(it, a) {
+    it.a = a;
+    if (a >= 1) {
+      if (it.clones) { it.mesh.material = it.orig; for (const m of it.clones) m.dispose(); it.clones = null; }
+      return;
+    }
+    if (!it.clones) {
+      it.clones = [].concat(it.orig).map((m) => { const k = m.clone(); k.transparent = true; k.depthWrite = false; return k; });
+      it.mesh.material = Array.isArray(it.orig) ? it.clones : it.clones[0];
+    }
+    it.clones.forEach((m, i) => { m.opacity = it.base[i] * a; });
+  }
+
+  return {
+    items,
+    /** current opacity (0..1 of the original) of a mesh: for tests */
+    opacityOf: (mesh) => byMesh.get(mesh)?.a ?? 1,
+    update(dt, pos) {
+      camera.updateMatrixWorld();
+      from.copy(camera.position);
+      side.setFromMatrixColumn(camera.matrixWorld, 0).multiplyScalar(0.45);
+      pts[0].set(pos.x, pos.y + 0.15, pos.z);
+      pts[1].set(pos.x, pos.y + 0.55, pos.z);
+      pts[2].set(pos.x, pos.y + 1.1, pos.z);
+      pts[3].set(pos.x, pos.y + 0.6, pos.z).add(side);
+      pts[4].set(pos.x, pos.y + 0.6, pos.z).sub(side);
+      pts[5].set(pos.x, pos.y + 1.75, pos.z);
+      hit.clear();
+      for (const p of pts) {
+        dir.subVectors(p, from);
+        const d = dir.length();
+        if (d < 0.5) continue;
+        dir.divideScalar(d);
+        rc.set(from, dir);
+        rc.near = 0; rc.far = d - 0.15;
+        for (const h of rc.intersectObjects(meshes, false)) hit.add(h.object);
+      }
+      const k = Math.min(1, dt * rate);
+      for (const it of items) {
+        const m = it.mesh;
+        let want = hit.has(m);
+        if (!want) {   // the camera inside / right at a (big) mesh: back faces are culled, so no ray would ever hit it
+          const bs = m.geometry.boundingSphere;
+          c.copy(bs.center).applyMatrix4(m.matrixWorld);
+          want = c.distanceTo(from) < bs.radius * m.matrixWorld.getMaxScaleOnAxis() + 0.8;
+        }
+        const target = want ? alpha : 1;
+        if (it.a === target) continue;
+        const a = it.a + (target - it.a) * k;
+        setAlpha(it, Math.abs(a - target) < 0.01 ? target : a);
       }
     },
   };
