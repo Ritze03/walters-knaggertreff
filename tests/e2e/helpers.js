@@ -51,33 +51,80 @@ export async function openPage(context, errors, label) {
   return page;
 }
 
+/** Lobby steps (page load, join, ready-up, start) get this long before createMatch gives up with a state dump. */
+export const LOBBY_TIMEOUT = 60_000;
+const DUMP_TIMEOUT = 3_000;
+const within = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r('<timeout>'), ms))]);
+
+/** Compact one-line-per-page dump: phase, seats (ready/connected), Start disabled, recent errors. Never throws, never hangs. */
+export async function dumpPages(pages, errors = []) {
+  const lines = [];
+  for (const [i, page] of pages.entries()) {
+    const label = i === 0 ? 'host' : `client${i}`;
+    const info = await within(page.evaluate(() => {
+      const s = window.__wk?.getState?.();
+      const startBtn = document.querySelector('[data-testid="start"]');
+      return {
+        phase: s?.phase ?? null, round: s?.round ?? null, mg: s?.minigame ? `${s.minigame.id}/${s.minigame.purpose}` : null,
+        seats: s?.seats?.map((x) => `${x.index}${x.isHost ? 'H' : ''}${x.isBot ? 'b' : ''}:${x.connected ? 'conn' : 'DISC'}/${x.isHost || x.ready ? 'ready' : 'notready'}`) ?? null,
+        startBtn: startBtn ? (startBtn.disabled ? 'disabled' : 'enabled') : 'absent',
+        hint: document.querySelector('[data-testid="lobby-hint"]')?.textContent ?? null,
+        trail: window.__trail?.slice(-4) ?? null,
+      };
+    }).catch((e) => `<evaluate failed: ${String(e.message).split('\n')[0]}>`), DUMP_TIMEOUT);
+    lines.push(`  ${label}: ${typeof info === 'string' ? info : JSON.stringify(info)}`);
+  }
+  const recent = errors.slice(-8);
+  lines.push(`  errors (${errors.length}): ${recent.length ? '\n    ' + recent.join('\n    ') : 'none'}`);
+  return lines.join('\n');
+}
+
+/** Runs `fn`; if it throws (typically a Playwright timeout), rethrows an Error naming the step plus a state dump of `pages`. */
+export async function withStep(name, pages, fn, errors = []) {
+  try {
+    return await fn();
+  } catch (e) {
+    const dump = await dumpPages(pages, errors);
+    const err = new Error(`[e2e step failed: ${name}] ${String(e.message).split('\n')[0]}\n${dump}`);
+    err.cause = e;
+    throw err;
+  }
+}
+
 /**
  * Host creates a game, `clients` bot pages join through the invite link, host starts it.
  * `query` is extra URL params for the host (e.g. 'stars=2&seed=1&mg=forza'); `hostBot` false leaves the host seat to a human (the test).
  * Returns { host, clients, pages, link, errors }.
  */
-export async function createMatch(context, { clients = 2, query = 'stars=2&seed=1', hostBot = true, clientBots = true, start = true } = {}) {
+export async function createMatch(context, { clients = 2, query = 'stars=2&seed=1', hostBot = true, clientBots = true, start = true, timeout = LOBBY_TIMEOUT } = {}) {
   const errors = [];
   const host = await openPage(context, errors, 'host');
-  await host.goto(`${BASE}?local&pid=h${hostBot ? '&bot' : ''}&${query}`);
-  await host.getByTestId('create').click();
-  const link = await host.getByTestId('invite-link').inputValue();
-  expect(link).toContain('?local#');
   const pages = [host];
+  const step = (name, fn) => withStep(name, pages, fn, errors);
+  await step('host: open and create game', async () => {
+    await host.goto(`${BASE}?local&pid=h${hostBot ? '&bot' : ''}&${query}`, { timeout });
+    await host.getByTestId('create').click({ timeout });
+  });
+  const link = await step('host: read invite link', () => host.getByTestId('invite-link').inputValue({ timeout }));
+  expect(link).toContain('?local#');
   for (let i = 1; i <= clients; i++) {
     const p = await openPage(context, errors, `client${i}`);
-    await p.goto(link.replace('?local', `?local&pid=c${i}${clientBots ? '&bot' : ''}`));
     pages.push(p);
+    await step(`client${i}: open invite link`, () => p.goto(link.replace('?local', `?local&pid=c${i}${clientBots ? '&bot' : ''}`), { timeout }));
   }
-  await host.getByTestId(`player-${clients}`).waitFor();
+  await step(`host: wait for player-${clients} in the lobby (all clients joined)`, () => host.getByTestId(`player-${clients}`).waitFor({ timeout }));
   if (start) {
-    await host.getByTestId('start').click();
-    for (const p of pages) await p.getByTestId('hud-coins-0').waitFor();
+    // Start stays disabled until every connected non-host seat is ready; click() waits for it to enable, so cap that wait.
+    await step('host: click Start (waits for all seats ready)', () => host.getByTestId('start').click({ timeout }));
+    for (const [i, p] of pages.entries()) {
+      await step(`${i === 0 ? 'host' : `client${i}`}: wait for board HUD (hud-coins-0) after Start`, () => p.getByTestId('hud-coins-0').waitFor({ timeout }));
+    }
   }
   return { host, clients: pages.slice(1), pages, link, errors };
 }
 
-export const state = (page) => page.evaluate(() => window.__wk.getState());
+export const state = (page) => Promise.race([page.evaluate(() => window.__wk.getState()),
+  new Promise((_, rej) => setTimeout(() => rej(new Error('state(): page.evaluate did not answer within 30s (page hung?)')), 30_000))]);
 export const events = (page) => page.evaluate(() => window.__events);
 export const waitPhase = (page, phase, timeout = 120_000) =>
   page.waitForFunction((p) => window.__wk?.getState()?.phase === p, phase, { timeout, polling: 100 });
@@ -112,7 +159,8 @@ export const waitState = (page, fn, arg, timeout = 120_000) =>
 export async function runMinigame(context, id, { players = 4, seed = 1, query = '', timeout = 5 * 60_000 } = {}) {
   const match = await createMatch(context, { clients: players - 1, query: `stars=2&seed=${seed}&mg=${id}${query ? `&${query}` : ''}` });
   const done = (s, want) => s.phase === 'minigameResults' && s.minigame?.id === want && !!s.minigame.results;
-  await Promise.all(match.pages.map((p) => waitState(p, done, id, timeout)));
+  await withStep(`${id}: wait for minigameResults on all pages (<= ${Math.round(timeout / 1000)}s)`, match.pages,
+    () => Promise.all(match.pages.map((p) => waitState(p, done, id, timeout))), match.errors);
   const st = await state(match.host);
   const mg = st.minigame, results = mg.results;
   expect(results.void, `${id} broke (results.void): see errors`).toBeFalsy();
