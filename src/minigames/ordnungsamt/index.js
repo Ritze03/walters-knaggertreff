@@ -1,6 +1,6 @@
 // "Ordnungsamt-Flucht" (arena, host-simulated). Rules: sim.js (pure, tested). Drawing: client.js.
 import { mountOrdnungsamt } from './client.js';
-import { DURATION_MS, hostInit, hostStep, hostResult } from './sim.js';
+import { DURATION_MS, hostInit, hostStep, hostResult, hostAdopt } from './sim.js';
 
 export default {
   id: 'ordnungsamt',
@@ -12,4 +12,5 @@ export default {
   hostInit,
   hostStep,
   hostResult,
+  hostAdopt,
 };

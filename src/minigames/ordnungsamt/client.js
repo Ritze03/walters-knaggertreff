@@ -1,7 +1,14 @@
-// Ordnungsamt-Flucht: Kaplay client. Draws the latest host snapshots (interpolated); the rules live in sim.js.
+// Ordnungsamt-Flucht: Kaplay client; the rules live in sim.js.
+// OWNER PATH (ctx.owner, a human client): my own avatar is simulated HERE (`own`, sim.js stepBody at a fixed 60 Hz from my input), so it reacts at once whatever the host's
+// lag; ownState() reports it to the host (mgOwn), which trusts it and sends me back only what it resolves (shoves + van hits as impulses, lives, vans). Remote avatars are drawn
+// from a 100 ms delayed snapshot buffer (interp.js). VANS are never delayed: they are drawn extrapolated from their velocity up to the current time (the host hit-tests my
+// reported position against the van where it is NOW, so what I see must be as close to host time as possible). When I am out I stop simulating and draw the snapshot.
+// NON-OWNER path (ctx.owner false: host-run test bots): the old rendering of the latest snapshot, extrapolated + smoothed.
 import { createRng } from '../../contracts.js';
+import { fixedStepper, takeImps } from '../owner.js';
+import { createTrack } from '../interp.js';
 import { box, disc, label, ease, setText, addHint, bubble as speechBubble } from '../draw.js';
-import { ARENA, C, DURATION_MS, botFrame } from './sim.js';
+import { ARENA, C, DURATION_MS, botFrame, stepBody } from './sim.js';
 
 const BUBBLE = 'Ordnungsamt! Ausweis bitte!';
 const HEART = '❤️', BLACK_HEART = '🖤';
@@ -62,6 +69,17 @@ export function mountOrdnungsamt(ctx) {
   const vans = new Map();   // id -> {obj, band, x, y}
   let netT = 0;
 
+  // ---- owner path state ----
+  const owner = !!ctx.owner && isPlayer;
+  let own = null;                 // my simulated body {x y vx vy kx ky fx fy dash cd stun dn}; null until the first snapshot seeds it
+  let lastImp = null;             // highest impulse id applied (null = nothing seen yet: the first snapshot only learns the current id); reported as `ack`
+  let tapped = false;             // a shove press waiting for the next 60 Hz step
+  let outSeats = new Set();       // seats the host has eliminated (they no longer collide)
+  const stepper = fixedStepper(60);
+  const tracks = new Map();       // seat -> interpolation buffer of that REMOTE player
+  const trackFor = (seat) => { let t = tracks.get(seat); if (!t) tracks.set(seat, t = createTrack({ delayMs: 100, snapDist: 200, keys: ['x', 'y', 'vx', 'vy', 'fx', 'fy'] })); return t; };
+  const iAmOut = () => !!snap?.ps.some((p) => p.s === self && p.out !== null);
+
   const popup = (text, x, y, color, size = 30) => {
     const o = label(k, fx, text, x, y, { size, color, outline: [5, '#1b2a49'] });
     const half = (o.width || 0) / 2 + 8;   // keep wide popups (KONTROLLIERT!) fully on screen near the arena edges
@@ -104,6 +122,37 @@ export function mountOrdnungsamt(ctx) {
     return { obj: o, stripe, bang, band, x: v.x, y: v.y, horizontal };
   }
 
+  /** owner path, per snapshot: seed `own` (first snapshot / remount), apply impulses addressed to me, feed the remote buffers */
+  function takeOwner(s) {
+    const mine = s.ps.find((p) => p.s === self);
+    const got = takeImps(s, self, lastImp);   // null on the first snapshot: nothing is replayed
+    lastImp = got.last;
+    if (!own && mine) own = { x: mine.x, y: mine.y, vx: mine.vx, vy: mine.vy, kx: mine.kx, ky: mine.ky, fx: mine.fx, fy: mine.fy, dash: mine.dash, cd: mine.cd, stun: mine.stun, dn: mine.dn ?? 0 };
+    if (own) for (const e of got.list) { own.kx += e.kx; own.ky += e.ky; own.stun = Math.max(own.stun, e.st); if (e.dc) own.dash = 0; }
+    outSeats = new Set(s.ps.filter((p) => p.out !== null).map((p) => p.s));
+    const now = performance.now();
+    for (const p of s.ps) if (p.s !== self) trackFor(p.s).push(now, { x: p.x, y: p.y, vx: p.vx + p.kx, vy: p.vy + p.ky, fx: p.fx, fy: p.fy });   // velocity incl. knockback: what the buffer extrapolates with
+  }
+
+  /** my body, one frame: fixed 60 Hz steps of the SAME body math as the host's (sim.js stepBody) from my stick + latched shove presses; a one-sided half-push stands in for the host's soft separation */
+  function stepOwn(dt) {
+    if (!owner || !own || !live || snap?.done || iAmOut()) return;
+    const f = ctx.input.takeFrame();
+    tapped ||= f.pressed.action;
+    stepper.step(dt * 1000, (ms) => {
+      if (stepBody(own, { move: f.move, pressed: { action: tapped } }, ms)) own.dn++;
+      tapped = false;
+      for (const e of crew.values()) {
+        if (e.seat === self || !e.seen || outSeats.has(e.seat)) continue;
+        const dx = own.x - e.x, dy = own.y - e.y, d = Math.hypot(dx, dy);
+        if (d >= 2 * C.R || d < 0.001) continue;
+        const push = (2 * C.R - d) / 2;
+        own.x = Math.max(ARENA.x0, Math.min(ARENA.x1, own.x + (dx / d) * push));
+        own.y = Math.max(ARENA.y0, Math.min(ARENA.y1, own.y + (dy / d) * push));
+      }
+    });
+  }
+
   function handleEvents(s) {
     const maxId = s.ev.reduce((m, e) => Math.max(m, e.i), 0);
     if (lastEv === null) { lastEv = maxId; return; }   // first snapshot (also after a remount): nothing to replay
@@ -138,11 +187,17 @@ export function mountOrdnungsamt(ctx) {
     const age = Math.min(0.06, k.time() - snapAt);
     const pull = ease(dt, 18);
     const time = k.time();
-    for (const p of snap.ps) {
-      const e = crew.get(p.s);
+    const wall = performance.now();
+    for (const sp of snap.ps) {
+      const e = crew.get(sp.s);
       if (!e) continue;
-      const tx = p.x + (p.vx + p.kx) * age, ty = p.y + (p.vy + p.ky) * age;
-      if (!e.seen || Math.hypot(tx - e.x, ty - e.y) > 160) { e.x = tx; e.y = ty; e.seen = true; } else { e.x += (tx - e.x) * pull; e.y += (ty - e.y) * pull; }
+      // body fields (position, facing, dash, cd, stun): mine from `own` (until I am out), remote ones from the delayed buffer, otherwise the snapshot; lives/inv/out always from the snapshot
+      const mineLocal = owner && sp.s === self && own && sp.out === null, smp = owner && sp.s !== self ? tracks.get(sp.s)?.sample(wall) : null;
+      const p = mineLocal ? { ...sp, ...own } : smp ? { ...sp, x: smp.x, y: smp.y, fx: smp.fx } : sp;
+      if (mineLocal || smp) { e.x = p.x; e.y = p.y; e.seen = true; } else {
+        const tx = p.x + (p.vx + p.kx) * age, ty = p.y + (p.vy + p.ky) * age;
+        if (!e.seen || Math.hypot(tx - e.x, ty - e.y) > 160) { e.x = tx; e.y = ty; e.seen = true; } else { e.x += (tx - e.x) * pull; e.y += (ty - e.y) * pull; }
+      }
       const out = p.out !== null;
       e.av.pos = k.vec2(e.x, e.y);
       e.av.hidden = out || (p.inv > 0 && Math.floor(time * 14) % 2 === 0);
@@ -161,13 +216,20 @@ export function mountOrdnungsamt(ctx) {
       setText(e.hearts, out ? '📄 raus' : HEART.repeat(Math.max(0, p.lives)) + BLACK_HEART.repeat(Math.max(0, C.LIVES - p.lives)));
     }
     // vans: create / move / remove
+    // Owner path: extrapolate to NOW from the newest snapshot, no delay and no smoothing lag (the host judges the hit against the van's current spot). A new snapshot's small
+    // correction is not snapped but bled off as an offset that decays quickly, so vans neither jump nor trail behind. Old path: the smoothed follower.
+    const vAge = Math.min(0.25, time - snapAt), bleed = Math.exp(-dt * 14);
     const seen = new Set();
     for (const v of snap.vans) {
       seen.add(v.id);
       let e = vans.get(v.id);
-      if (!e) { e = makeVan(v); vans.set(v.id, e); }
-      const tx = v.x + v.vx * age, ty = v.y + v.vy * age;
-      e.x += (tx - e.x) * pull; e.y += (ty - e.y) * pull;
+      if (!e) { e = makeVan(v); vans.set(v.id, e); e.ox = 0; e.oy = 0; e.snapAt = snapAt; e.px = v.x + v.vx * vAge; e.py = v.y + v.vy * vAge; }
+      const tx = v.x + v.vx * (owner ? vAge : age), ty = v.y + v.vy * (owner ? vAge : age);
+      if (owner) {
+        if (e.snapAt !== snapAt) { e.snapAt = snapAt; e.ox = e.px - tx; e.oy = e.py - ty; if (Math.hypot(e.ox, e.oy) > 80) { e.ox = 0; e.oy = 0; } }
+        e.ox *= bleed; e.oy *= bleed;
+        e.x = tx + e.ox; e.y = ty + e.oy; e.px = e.x; e.py = e.y;
+      } else { e.x += (tx - e.x) * pull; e.y += (ty - e.y) * pull; }
       e.obj.pos = k.vec2(e.x, e.y);
       const flash = Math.floor(time * 8) % 2 === 0;
       e.obj.siren1.color = k.rgb(flash ? '#ff3b3b' : '#6b1a1a');
@@ -190,6 +252,7 @@ export function mountOrdnungsamt(ctx) {
   root.onUpdate(() => {
     const dt = k.dt();
     netT += dt;
+    stepOwn(dt);
     render(dt);
     bannerAge += dt;
     const a = bannerAge < 0.2 ? bannerAge / 0.2 : bannerAge > 1.8 ? Math.max(0, 1 - (bannerAge - 1.8) / 0.4) : 1;
@@ -209,11 +272,23 @@ export function mountOrdnungsamt(ctx) {
     update(s) {
       if (!s || !Array.isArray(s.ps)) return;
       snap = s; snapAt = k.time();
+      if (owner) takeOwner(s);
       handleEvents(s);
+    },
+    /** what the runner sends to the host as mgOwn (30 Hz); null until the first snapshot seeded `own`, and once I am out (the host ignores an eliminated player's reports) */
+    ownState() {
+      if (!owner || !own || iAmOut()) return null;
+      const r1 = (n) => Math.round(n * 10) / 10, r2 = (n) => Math.round(n * 100) / 100;
+      return {
+        x: r1(own.x), y: r1(own.y), vx: r1(own.vx), vy: r1(own.vy), kx: r1(own.kx), ky: r1(own.ky), fx: r2(own.fx), fy: r2(own.fy),
+        dash: Math.round(own.dash), cd: Math.round(own.cd), stun: Math.round(own.stun), dn: own.dn, ack: lastImp ?? 0,
+      };
     },
     botInput() {
       if (!snap || !isPlayer) return {};
-      const f = botFrame(snap, self, botRng);
+      // a `?bot` tab is an owner: it must steer from the merged view (the snapshot's idea of me is a round trip old)
+      const view = owner && own && !iAmOut() ? { ...snap, ps: snap.ps.map((p) => (p.s === self ? { ...p, ...own } : p)) } : snap;
+      const f = botFrame(view, self, botRng);
       return { move: f.move, action: f.action };
     },
     destroy() {},   // everything hangs off root (the runner destroys it)

@@ -5,7 +5,11 @@
 //  - `action` = shove: a short dash. Every rival touched during the dash gets a big knockback + stun. Cooldown COOLDOWN_MS.
 //  - if a shoved player is hit by a van within CREDIT_MS, the shover gets a "Kollateralschaden" credit (tie-breaker for survivors).
 //  - ranking: still alive > out; alive: more lives, then more credits; out: later is better. Equal keys tie.
+// OWNER-AUTHORITATIVE MOVEMENT (contracts section 10): every human client simulates its OWN body with stepBody() and reports it (mgOwn -> hostAdopt). The host trusts the report
+//  for the body (x y vx vy kx ky fx fy dash cd stun + the shove serial dn) and keeps resolving everything else: shoves and van hits (delivered to the victim as impulses, owner.js
+//  pushImp), vans, lives, inv, out, credits, events. Seats without a fresh report (host-run test bots, disconnected/stale owners) are driven by their input frame exactly as before.
 import { createRng } from '../../contracts.js';
+import { adoptFields, isOwned, pushImp } from '../owner.js';
 
 export const DURATION_MS = 30000;
 export const ARENA = { w: 1280, h: 720, x0: 40, y0: 90, x1: 1240, y1: 690 };   // x0..y1 = where players may walk
@@ -32,10 +36,10 @@ export function hostInit({ seats, seed, rng }) {
     const dx = Math.cos(a), dy = Math.sin(a);
     return {
       s, x: r1(cx + dx * 380), y: r1(cy + dy * 220), vx: 0, vy: 0, kx: 0, ky: 0, fx: r2(-dx), fy: r2(-dy),
-      dash: 0, cd: 0, stun: 0, inv: 0, lives: C.LIVES, out: null, cr: 0, ls: -1, lt: 0, dh: [],
+      dash: 0, cd: 0, stun: 0, inv: 0, lives: C.LIVES, out: null, cr: 0, ls: -1, lt: 0, dh: [], dn: 0, ia: 0,
     };
   });
-  return { t: 0, done: false, dur: DURATION_MS, ps, vans: [], next: 1600, nid: 1, eid: 0, ev: [], rs: r.state() };
+  return { t: 0, done: false, dur: DURATION_MS, ps, vans: [], next: 1600, nid: 1, eid: 0, ev: [], rs: r.state(), imp: [], iid: 0 };
 }
 
 const vanSpeed = (mg) => lerp(240, 520, Math.min(1, mg.t / mg.dur));
@@ -66,6 +70,37 @@ function circleHitsRect(px, py, r, v) {
   return (px - nx) ** 2 + (py - ny) ** 2 < r * r;
 }
 
+/**
+ * One tick of a player's body (pure; the host and the owner's client run the very same math). Timers count down, then, unless `env.passive`:
+ * facing from the stick, shove (dash) start, velocity easing; then knockback decay and dead-reckoned position, clamped to the arena.
+ * `env.passive` = the host stepping an OWNED seat: the owner already did the input-driven part and reported the result, so only timers, decay and dead reckoning run.
+ * `f` is an InputFrame (move + pressed). @returns true when a dash started this tick (the owner increments its serial `dn` then).
+ */
+export function stepBody(p, f, dtMs, env = {}) {
+  const sec = dtMs / 1000;
+  p.dash = Math.max(0, p.dash - dtMs); p.cd = Math.max(0, p.cd - dtMs); p.stun = Math.max(0, p.stun - dtMs);
+  let started = false;
+  if (!env.passive) {
+    let mx = f.move?.x ?? 0, my = f.move?.y ?? 0;
+    const ml = Math.hypot(mx, my);
+    if (ml > 1) { mx /= ml; my /= ml; }
+    const dl = Math.min(ml, 1);
+    if (dl > 0.2 && p.stun === 0) { p.fx = r2(mx / dl); p.fy = r2(my / dl); }
+    if (f.pressed?.action && p.cd === 0 && p.stun === 0 && p.dash === 0) { p.dash = C.DASH_MS; p.cd = C.COOLDOWN_MS; p.dh = []; started = true; }
+    if (p.dash > 0) { p.vx = p.fx * C.DASH_SPEED; p.vy = p.fy * C.DASH_SPEED; }
+    else {
+      const k = Math.min(1, sec * C.ACCEL), ctl = p.stun > 0 ? 0 : 1;
+      p.vx += (mx * C.SPEED * ctl - p.vx) * k;
+      p.vy += (my * C.SPEED * ctl - p.vy) * k;
+    }
+  }
+  const decay = Math.pow(0.5, dtMs / C.KB_HALF_MS);
+  p.kx *= decay; p.ky *= decay;
+  p.x = clamp(p.x + (p.vx + p.kx) * sec, ARENA.x0, ARENA.x1);
+  p.y = clamp(p.y + (p.vy + p.ky) * sec, ARENA.y0, ARENA.y1);
+  return started;
+}
+
 /** Advances the game by dtMs. `inputs`: seat -> InputFrame (missing seat = no input). Mutates and returns mg. */
 export function hostStep(mg, inputs, dtMs) {
   if (mg.done) return mg;
@@ -75,29 +110,11 @@ export function hostStep(mg, inputs, dtMs) {
   let rng = null;
   const R = () => (rng ??= createRng(mg.rs));
 
-  // --- players ---
+  // --- players: an owned seat keeps only timers + dead reckoning (its body comes from hostAdopt), the others follow their input frame ---
   for (const p of mg.ps) {
     if (p.out !== null) continue;
-    const f = inputs?.[p.s] ?? ZERO;
-    p.dash = Math.max(0, p.dash - dtMs); p.cd = Math.max(0, p.cd - dtMs); p.stun = Math.max(0, p.stun - dtMs); p.inv = Math.max(0, p.inv - dtMs);
-    let mx = f.move?.x ?? 0, my = f.move?.y ?? 0;
-    const ml = Math.hypot(mx, my);
-    if (ml > 1) { mx /= ml; my /= ml; }
-    const dl = Math.min(ml, 1);
-    if (dl > 0.2 && p.stun === 0) { p.fx = r2(mx / dl); p.fy = r2(my / dl); }
-    if (f.pressed?.action && p.cd === 0 && p.stun === 0 && p.dash === 0) {
-      p.dash = C.DASH_MS; p.cd = C.COOLDOWN_MS; p.dh = [];
-    }
-    if (p.dash > 0) { p.vx = p.fx * C.DASH_SPEED; p.vy = p.fy * C.DASH_SPEED; }
-    else {
-      const k = Math.min(1, sec * C.ACCEL), ctl = p.stun > 0 ? 0 : 1;
-      p.vx += (mx * C.SPEED * ctl - p.vx) * k;
-      p.vy += (my * C.SPEED * ctl - p.vy) * k;
-    }
-    const decay = Math.pow(0.5, dtMs / C.KB_HALF_MS);
-    p.kx *= decay; p.ky *= decay;
-    p.x = clamp(p.x + (p.vx + p.kx) * sec, ARENA.x0, ARENA.x1);
-    p.y = clamp(p.y + (p.vy + p.ky) * sec, ARENA.y0, ARENA.y1);
+    p.inv = Math.max(0, p.inv - dtMs);   // van-proof timer: host-only (the owner's body has no inv)
+    stepBody(p, inputs?.[p.s] ?? ZERO, dtMs, { passive: isOwned(p, mg.t) });
   }
 
   // --- shoves: a dashing player pushes every rival it touches (once per dash) ---
@@ -108,22 +125,22 @@ export function hostStep(mg, inputs, dtMs) {
       const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
       if (d > 2 * C.R + 10) continue;
       const nx = d > 0.001 ? dx / d : p.fx, ny = d > 0.001 ? dy / d : p.fy;
-      q.kx += nx * C.SHOVE_KB; q.ky += ny * C.SHOVE_KB;
-      q.stun = Math.max(q.stun, C.SHOVE_STUN_MS);
+      pushImp(mg, q, q.s, { kx: nx * C.SHOVE_KB, ky: ny * C.SHOVE_KB, st: C.SHOVE_STUN_MS });   // the victim's owner applies it locally and acks; the host copy gets the same hit
       q.ls = p.s; q.lt = mg.t;
       p.dh.push(q.s);
       pushEv(mg, { k: 's', s: p.s, o: q.s, x: r1(q.x), y: r1(q.y) });
     }
   }
 
-  // --- players push each other apart a little (so crowds feel like crowds) ---
+  // --- players push each other apart a little (each takes half; an owned seat does its half itself, client-side, and is not moved here) ---
   for (let i = 0; i < mg.ps.length; i++) for (let j = i + 1; j < mg.ps.length; j++) {
     const a = mg.ps[i], b = mg.ps[j];
     if (a.out !== null || b.out !== null) continue;
     const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
     if (d >= 2 * C.R || d < 0.001) continue;
     const push = (2 * C.R - d) / 2, nx = dx / d, ny = dy / d;
-    a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push;
+    if (!isOwned(a, mg.t)) { a.x -= nx * push; a.y -= ny * push; }
+    if (!isOwned(b, mg.t)) { b.x += nx * push; b.y += ny * push; }
   }
 
   // --- vans ---
@@ -141,8 +158,8 @@ export function hostStep(mg, inputs, dtMs) {
     if (p.out !== null || p.inv > 0) continue;
     const v = mg.vans.find((van) => circleHitsRect(p.x, p.y, C.R, van));
     if (!v) continue;
-    p.lives--; p.inv = C.INV_MS; p.stun = C.HIT_STUN_MS; p.dash = 0;
-    p.kx += Math.sign(v.vx) * C.VAN_KB; p.ky += Math.sign(v.vy) * C.VAN_KB;
+    p.lives--; p.inv = C.INV_MS;
+    pushImp(mg, p, p.s, { kx: Math.sign(v.vx) * C.VAN_KB, ky: Math.sign(v.vy) * C.VAN_KB, st: C.HIT_STUN_MS, dc: true });   // stun + knockback, cancels the victim's shove
     const credit = p.ls >= 0 && mg.t - p.lt <= C.CREDIT_MS ? p.ls : -1;
     if (credit >= 0) mg.ps.find((q) => q.s === credit).cr++;
     pushEv(mg, { k: 'h', s: p.s, o: credit, x: r1(p.x), y: r1(p.y) });
@@ -154,6 +171,27 @@ export function hostStep(mg, inputs, dtMs) {
   if (rng) mg.rs = rng.state();
   if ((mg.ps.length > 1 && alive(mg).length <= 1) || mg.t >= mg.dur) mg.done = true;
   return mg;
+}
+
+// The fields an owner reports. kin = kinematic: ignored until the owner has acked the latest impulse (a report from before a hit must not overwrite the knockback).
+// dn = the shove serial: the owner counts its shoves, a new value tells the host "a fresh shove started" (resets dh so it can hit again).
+// NOT here (host-resolved, never adopted): lives, inv, out, cr, ls, lt, dh, ia, the vans.
+const OWNED = {
+  x: { lo: ARENA.x0, hi: ARENA.x1, kin: true }, y: { lo: ARENA.y0, hi: ARENA.y1, kin: true },
+  vx: { lo: -1000, hi: 1000, kin: true }, vy: { lo: -1000, hi: 1000, kin: true },       // shove speed is 850
+  kx: { lo: -4000, hi: 4000, kin: true }, ky: { lo: -4000, hi: 4000, kin: true },       // a shove is 1400; stacked shoves + a van hit stay below ~3000
+  fx: { lo: -1, hi: 1, dp: 2, kin: true }, fy: { lo: -1, hi: 1, dp: 2, kin: true },
+  dash: { lo: 0, hi: C.DASH_MS, kin: true }, cd: { lo: 0, hi: C.COOLDOWN_MS, kin: true }, stun: { lo: 0, hi: C.HIT_STUN_MS * 2, kin: true },
+  dn: { lo: 0, hi: 1e6, serial: true },
+};
+
+/** Host: adopt one owner report (runner calls it once per fresh mgOwn report, before the sim batch). Whitelist + clamp only. An eliminated player's reports are ignored (it no longer plays). */
+export function hostAdopt(mg, seat, report) {
+  const p = mg.ps.find((q) => q.s === seat);
+  if (!p || p.out !== null) return null;
+  const res = adoptFields(p, report, OWNED, mg.t);
+  if (res?.changed.includes('dn')) p.dh = [];   // a new shove: it may hit every rival again
+  return res;
 }
 
 const fmtSec = (ms) => (ms / 1000).toFixed(1).replace('.', ',');
