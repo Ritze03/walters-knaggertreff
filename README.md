@@ -45,18 +45,18 @@ Hängt der Beitritt bei "Verbinde mit dem Spiel…"? Manche Netze (strenge Firme
 
 - **Forza lädt herunter** - stoppe den Download-Balken bei exakt 100 %
 - **Ordnungsamt-Flucht** - weich den Transportern aus und schubs deine Freunde rein
-- **Aura-Farming** - sammle Aura und weich Hindernissen aus
-- **Sitzplatz-Krieg im ICE** - ergattere den letzten freien Platz
-- **Pfand-Tauziehen** - zieh die Gegner mit schnellen Tastendrücken über die Linie
-- **U-Bahn-Surfers** - renn durch den Tunnel und weich Zügen aus
-- **Bahnsteig-Chaos** - behaupte dich auf dem vollen Bahnsteig
-- **Nur nach oben: Knaggerturm** - spring und klettere so hoch wie möglich
-- **Pfandautomat** - gib das Leergut möglichst schnell ab
-- **Bürgeramt-Stempel** - stempel die Akten, bevor die Schlange wächst
-- **Doodle-Knagger** - hüpf von Plattform zu Plattform nach oben
-- **Döner mit alles** - bau den Döner nach Kundenwunsch zusammen
-- **Flappy Taube** - flattere durch die Lücken
-- **Schlager Hero** - triff die Noten im Takt
+- **Aura-Farming** - Arena: sammle Aura-Kugeln und schubs Rivalen, damit sie Aura verlieren; die meiste Aura gewinnt
+- **Sitzplatz-Krieg im ICE** - Team (2 gegen 2): färbe mehr Sitze in deiner Teamfarbe ein, wirf Jacken zum Reservieren und weich dem Schaffner aus
+- **Pfand-Tauziehen** - Team (2 gegen 2): wechselt zwischen zwei Tasten, um die Pfandkiste über die Linie zu ziehen
+- **U-Bahn-Surfers** - Solo: renn durch den Tunnel, weich Hindernissen aus und sammle Pfand; Strecke plus Pfand zählt
+- **Bahnsteig-Chaos** - Arena: der Bahnsteig bricht stückweise weg, schubs Rivalen runter und bleib als Letzter oben
+- **Nur nach oben: Knaggerturm** - Solo: spring über Plattformen den Turm hinauf, wer am höchsten kommt, gewinnt
+- **Pfandautomat** - füttere den Automaten im Takt mit Flaschen; Müll und schlechtes Timing verstopfen ihn
+- **Bürgeramt-Stempel** - ein mürrischer Beamter gibt Befehle, befolge sie nur nach einem "Bitte" und hör auf seine Worte, nicht auf sein Schild
+- **Doodle-Knagger** - endloses Hüpfen und Klettern auf Karopapier, die maximale Höhe zählt
+- **Döner mit alles** - bau die gezeigte Bestellung so schnell wie möglich zusammen
+- **Flappy Taube** - flieg mit einer Taste als Taube durch einen Berliner Hindernisparcours
+- **Schlager Hero** - triff die fallenden Noten im Takt eines Schlager-Loops
 - Weitere Minispiele folgen.
 
 ## Steuerung
