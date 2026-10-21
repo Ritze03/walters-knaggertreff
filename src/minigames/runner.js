@@ -4,7 +4,8 @@ import { MSG, PHASE, MINIGAMES, MG_VIEW, SCREEN, TIMING, createRng, placementsFr
 import { addAvatar } from '../avatar/index.js';
 import { getMinigame } from './index.js';
 import { box, label } from './draw.js';
-import { soloLayout, spectatorLayout } from './layout.js';
+import { fitView, soloLayout, spectatorLayout } from './layout.js';
+import { textOpts } from './font.js';
 import { buildIntro, buildResults } from './screens.js';
 
 const LINGER_MS = 1200;      // host waits this long after the last final / the arena's `done` before reporting (so everybody sees the finish)
@@ -12,6 +13,7 @@ const STALE_INPUT_MS = 500;  // an arena input older than this counts as "no inp
 const MAX_SIM_CATCHUP = 8;   // sim steps per frame at most
 const EMPTY_FRAME = { move: { x: 0, y: 0 }, jump: false, action: false, confirm: false, back: false, pressed: { jump: false, action: false, confirm: false, back: false } };
 const BTN = ['jump', 'action', 'confirm', 'back'];
+const TAG_SIZE = 18;     // thumbnail name tag, screen px
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
 /** untrusted wire frame -> InputFrame */
@@ -33,6 +35,22 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
   let scene = null;        // the current stage's objects + cleanups
   let destroyed = false;
 
+  // ---------------------------------------------------------------- DOM caption slot
+  // The caption bubble (DOM, src/ui) normally sits under the HUD strip of the board. While a minigame runs it moves to the bottom edge (class mg-play on #ui)
+  // and, in the solo split view, shrinks to the thumbnail column (mg-col + --cap-l/--cap-w): never over the big lane, never over a name tag (those sit on top of each thumbnail).
+  const uiEl = typeof document !== 'undefined' ? document.getElementById('ui') : null;
+  let capCol = null;       // thumbnail column {x, w} in screen px, or null
+  const view = () => fitView(k.canvas.getBoundingClientRect());
+  function placeCaption() {
+    if (!uiEl) return;
+    const v = view();
+    uiEl.style.setProperty('--cap-b', `${Math.max(0, window.innerHeight - (v.oy + SCREEN.h * v.s)) + 10 * v.s}px`);   // 10 screen px above the view's bottom edge
+    uiEl.classList.toggle('mg-col', !!capCol);
+    if (capCol) { uiEl.style.setProperty('--cap-l', `${v.ox + capCol.x * v.s}px`); uiEl.style.setProperty('--cap-w', `${capCol.w * v.s}px`); }
+  }
+  const onResize = () => requestAnimationFrame(() => { if (!destroyed) placeCaption(); });
+  if (uiEl) { uiEl.classList.add('mg-play'); window.addEventListener('resize', onResize); placeCaption(); }
+
   // ---------------------------------------------------------------- helpers
   const noop = () => {};
   const warn = (msg, e) => console.error(`[minigames] ${msg}`, e ?? '');
@@ -51,6 +69,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
     for (const c of s.cleanups) { try { c(); } catch (e) { warn('cleanup failed', e); } }
     for (const inst of s.instances ?? []) { try { inst.destroy(); } catch (e) { warn('instance.destroy failed', e); } }
     s.obj.destroy();
+    capCol = null; placeCaption();
     if (debug.bot) input.inject(null);
   }
   function newCur(st) {
@@ -170,32 +189,50 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
       if (inst) scene.instances.push(inst);
       return { lane, inst };
     }
-    const frame = (rect, name) => {
-      box(k, scene.obj, rect.x - 3, rect.y - 3, rect.w + 6, rect.h + 6, '#000000', { radius: 4, outline: [3, '#3b4a6b'] });
-      return label(k, scene.obj, name, rect.x + rect.w / 2, rect.y - 14, { size: 18, color: '#ffffff', outline: [3, '#14182a'], width: rect.w });
-    };
-    const capOf = (seat) => {
+    // name tag over a thumbnail: ONE line, "Name  ✓ Ergebnis", the name is shortened with an ellipsis so the tag never grows past its thumbnail
+    const tagW = (str) => k.formatText({ text: str, ...textOpts(k, TAG_SIZE) }).width;
+    const capOf = (seat, maxW) => {
       const f = cur.finals.get(seat);
-      return `${state.seats[seat].profile.name}${f ? `  ✓ ${f.label ?? 'fertig'}` : ''}`;
+      const name = state.seats[seat].profile.name, tail = f ? `  ✓ ${f.label ?? 'fertig'}` : '';
+      if (tagW(name + tail) <= maxW) return name + tail;
+      const chars = Array.from(name);
+      const keepTail = tagW(`…${tail}`) <= maxW;     // else the result label alone is too long: shorten everything
+      const full = keepTail ? chars : Array.from(name + tail);
+      const suffix = keepTail ? tail : '';
+      while (full.length > 1 && tagW(`${full.join('')}…${suffix}`) > maxW) full.pop();
+      return `${full.join('')}…${suffix}`;
     };
+    const frame = (rect, seat) => {
+      box(k, scene.obj, rect.x - 3, rect.y - 3, rect.w + 6, rect.h + 6, '#000000', { radius: 4, outline: [3, '#3b4a6b'] });
+      const cap = label(k, scene.obj, capOf(seat, rect.w), rect.x + rect.w / 2, rect.y - 14, { size: TAG_SIZE, color: '#ffffff', outline: [3, '#14182a'] });
+      cap.tagW = rect.w;
+      return cap;
+    };
+    // the sound widget (DOM, top right) must not cover a tag: the thumbnail panel starts below it (screen px of its bottom edge + margin)
+    const snd = typeof document !== 'undefined' ? document.querySelector('#ui .sound')?.getBoundingClientRect() : null;
+    const v0 = view();
+    const reserveTop = snd && snd.height ? Math.min(140, Math.max(0, (snd.bottom - v0.oy) / v0.s + 6)) : 0;
 
     // ---- layout per kind / role
     if (solo && participant) {
       const others = desc.seats.filter((s) => s !== self);
-      const lay = soloLayout(others.length, logical);
+      const lay = soloLayout(others.length, logical, SCREEN, { reserveTop });
       centerX = lay.main.x + lay.main.w / 2;
       cur.main = mountLane(lay.main, 'main', self);
       cur.mainCaption = label(k, scene.obj, '', centerX, lay.main.y + lay.main.h - 18, { size: 22, color: '#ffffff', outline: [4, '#14182a'] });
       others.forEach((s, i) => {
         const r = lay.thumbs[i];
-        const cap = frame(r, capOf(s));
+        const cap = frame(r, s);
         const t = mountLane(r, 'thumb', s);
         cur.thumbs.set(s, { ...t, cap });
       });
+      const xs = lay.thumbs.map((t) => t.cell.x), xe = lay.thumbs.map((t) => t.cell.x + t.cell.w);
+      if (xs.length) capCol = { x: Math.min(...xs), w: Math.max(...xe) - Math.min(...xs) };
+      placeCaption();
     } else if (solo) {
-      const lay = spectatorLayout(desc.seats.length, logical);
+      const lay = spectatorLayout(desc.seats.length, logical, SCREEN, { reserveTop });
       desc.seats.forEach((s, i) => {
-        const cap = frame(lay[i], capOf(s));
+        const cap = frame(lay[i], s);
         cur.thumbs.set(s, { ...mountLane(lay[i], 'thumb', s), cap });
       });
     } else {
@@ -205,9 +242,13 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
       const f = cur.finals.get(seat);
       if (seat === self && cur.mainCaption) cur.mainCaption.text = `Fertig: ${f?.label ?? ''}  – warte auf die anderen…`;
       const th = cur.thumbs.get(seat);
-      if (th) th.cap.text = capOf(seat);
+      if (th) th.cap.text = capOf(seat, th.cap.tagW);
     };
     for (const seat of cur.finals.keys()) cur.onFinal(seat);
+    // read-only debug hook for e2e geometry checks: main lane, thumbnail lanes and name tags in screen px
+    globalThis.__wkMg = { main: cur.main ? { x: cur.main.lane.pos.x, y: cur.main.lane.pos.y, w: logical.w * cur.main.lane.scale.x, h: logical.h * cur.main.lane.scale.y } : null,
+      thumbs: () => [...cur.thumbs].map(([seat, t]) => ({ seat, x: t.lane.pos.x, y: t.lane.pos.y, w: logical.w * t.lane.scale.x, h: logical.h * t.lane.scale.y })),
+      tags: () => [...cur.thumbs].map(([seat, t]) => ({ seat, text: t.cap.text, x: t.cap.pos.x - t.cap.width / 2, y: t.cap.pos.y - t.cap.height / 2, w: t.cap.width, h: t.cap.height })) };
 
     // ---- countdown overlay
     const cd = label(k, scene.obj, '', centerX, SCREEN.h / 2, { size: 220, color: '#ffd43b', outline: [14, '#14182a'], opacity: 0 });
@@ -370,6 +411,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
       if (destroyed) return;
       destroyed = true;
       endScene();
+      if (uiEl) { uiEl.classList.remove('mg-play', 'mg-col'); window.removeEventListener('resize', onResize); }
       for (const off of offs) { try { off(); } catch { /* already gone */ } }
       root.destroy();
       if (debug.bot) input.inject(null);
