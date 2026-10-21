@@ -49,11 +49,11 @@ function mergeProfile(st, idx, base, p) {
   return out;
 }
 
-function newSeat(st, playerId, profile, isHost, isBot) {
+function newSeat(st, playerId, profile, isHost, isBot, hostBot = false) {
   const index = st.seats.length;
   const color = PLAYER_COLORS.find((col) => !colorTaken(st, col, -1)) ?? PLAYER_COLORS[0];
   const base = { playerId, name: `Spieler ${index + 1}`, color, hat: 'none' };
-  const seat = { index, playerId, profile: mergeProfile(st, -1, base, profile), connected: true, isHost, isBot: !!isBot, ready: false };
+  const seat = { index, playerId, profile: mergeProfile(st, -1, base, profile), connected: true, isHost, isBot: !!isBot, ready: hostBot, hostBot };
   st.seats.push(seat);
   st.players.push(newPlayer(st.rules));
   return seat;
@@ -72,6 +72,7 @@ export function createGame({ gameId, hostPlayerId, hostProfile, seed, starTarget
       boardId: Object.hasOwn(BOARD_ID, boardId) ? boardId : 'spaeti',
       forceMinigame: forceMinigame && Object.hasOwn(MINIGAMES, forceMinigame) ? forceMinigame : null,
       availableMinigames: avail.length ? avail : null,   // null = every MINIGAMES id
+      testMode: false, testLast: null,                   // Testmodus (lobby picker, no board, nothing counts); testLast = last started test minigame
     },
     rules: clone(RULES_FOR_STATE),
     seats: [], players: [], turnOrder: [], turnIndex: 0, round: 0, duelsThisRound: 0, turn: null, starSpaceId: null, traps: {},
@@ -96,6 +97,7 @@ export function resumeGame(state, hostPlayerId) {
   const st = clone(state);
   const hostIdx = Math.max(0, st.seats.findIndex((s) => s.playerId === hostPlayerId));
   for (const s of st.seats) s.connected = s.index === hostIdx;
+  if (st.settings.testMode && st.phase !== 'lobby') Object.assign(st, { phase: 'lobby', minigame: null });   // a test run is never resumed, the picker is
   if (st.phase === 'lobby') removeDisconnected(st);
   if (st.phase === 'minigame') {
     st.phase = 'minigameIntro';
@@ -109,6 +111,13 @@ export function resumeGame(state, hostPlayerId) {
 function removeDisconnected(st) {
   st.players = st.players.filter((_, i) => st.seats[i].connected);
   st.seats = st.seats.filter((s) => s.connected);
+  st.seats.forEach((s, i) => { s.index = i; });
+}
+
+/** lobby only: drop every seat matching `pred` and re-pack indices */
+function removeSeats(st, pred) {
+  st.players = st.players.filter((_, i) => !pred(st.seats[i]));
+  st.seats = st.seats.filter((s) => !pred(s));
   st.seats.forEach((s, i) => { s.index = i; });
 }
 
@@ -141,6 +150,11 @@ function dispatch(c, actor, intent) {
 function requireHostSeat(c, actor, phase) {
   if (!c.st.seats[actor].isHost) fail(ERR.forbidden);
   if (c.st.phase !== phase) fail(ERR.wrongPhase);
+}
+
+function requireTestLobby(c, actor) {
+  requireHostSeat(c, actor, 'lobby');
+  if (!c.st.settings.testMode) fail(ERR.invalid);
 }
 
 function requireTurn(c, actor, step) {
@@ -193,6 +207,7 @@ const HANDLERS = {
   startGame(c, actor) {
     requireHostSeat(c, actor, 'lobby');
     const { st } = c;
+    if (st.settings.testMode) fail(ERR.invalid);   // the picker is not a match: leave test mode first
     if (connectedSeats(st).length < MIN_PLAYERS) fail(ERR.tooFewPlayers);
     if (st.seats.some((s) => s.connected && !s.isHost && !s.ready)) fail(ERR.notReady);
     if (!hasBoard(st.settings.boardId)) fail(ERR.invalid);
@@ -215,6 +230,57 @@ const HANDLERS = {
       phase: 'lobby', turnOrder: [], turnIndex: 0, round: 0, duelsThisRound: 0, turn: null, starSpaceId: null, traps: {},
       endspurt: false, minigame: null, mgHistory: [], winner: null, log: [],
     });
+  },
+
+  // -------------------------------------------------------------------------------------------------------------------
+  // test mode (lobby picker): minigames on their own, host-run bots, nothing counts
+
+  setTestMode(c, actor, i) {
+    requireHostSeat(c, actor, 'lobby');
+    if (typeof i.on !== 'boolean') fail(ERR.invalid);
+    const { st } = c;
+    if (!!st.settings.testMode === i.on) return NOOP;
+    st.settings = { ...st.settings, testMode: i.on };
+    if (!i.on) removeSeats(st, (s) => s.hostBot);   // bots only play in test mode: a normal match would leave them standing around
+  },
+
+  addBot(c, actor, i) {
+    requireTestLobby(c, actor);
+    const { st } = c;
+    const want = i.count === undefined ? 1 : i.count;
+    if (!Number.isInteger(want) || want < 1) fail(ERR.invalid);
+    const room = MAX_PLAYERS - st.seats.length;
+    if (room <= 0) fail(ERR.full);
+    for (let n = Math.min(want, room); n > 0; n--) {
+      let k = 1;
+      while (st.seats.some((s) => s.profile.name === `Bot ${k}`)) k++;
+      const seat = newSeat(st, `bot-${c.rng.u32().toString(36)}`, { name: `Bot ${k}`, hat: c.rng.pick(HATS) }, false, true, true);
+      emit(c, { type: 'seatJoined', seat: seat.index, rejoin: false });
+    }
+  },
+
+  removeBot(c, actor, i) {
+    requireTestLobby(c, actor);
+    const { st } = c;
+    if (!Number.isInteger(i.seat) || !st.seats[i.seat]?.hostBot) fail(ERR.invalid);
+    removeSeats(st, (s) => s.index === i.seat);
+    emit(c, { type: 'seatLeft', seat: i.seat });
+  },
+
+  testMinigame(c, actor, i) {
+    requireTestLobby(c, actor);
+    const { st } = c;
+    const avail = st.settings.availableMinigames;
+    if (typeof i.id !== 'string' || !Object.hasOwn(MINIGAMES, i.id) || (avail && !avail.includes(i.id))) fail(ERR.invalid);
+    const seats = connectedSeats(st);
+    if (seats.length < MIN_PLAYERS) fail(ERR.tooFewPlayers);
+    const mg = pickMinigame({ seats, purpose: 'round', forceId: i.id, recent: [], rng: c.rng, allowed: [i.id] });
+    if (!mg) fail(ERR.playerCount);   // count outside min..max, or a team game with an odd / too small count
+    mg.ready = seats.filter((s) => st.seats[s].hostBot);   // host-run bots need no "Bereit!"
+    st.settings = { ...st.settings, testLast: i.id };
+    st.minigame = mg;
+    st.phase = 'minigameIntro';   // mgHistory / round untouched: nothing of this belongs to a match
+    emit(c, { type: 'minigameStart', minigame: clone(mg) });
   },
 
   // -------------------------------------------------------------------------------------------------------------------
@@ -364,6 +430,10 @@ const HANDLERS = {
     const { st } = c;
     if (st.phase === 'minigameIntro') {
       st.phase = 'minigame';
+    } else if (st.phase === 'minigameResults' && st.settings.testMode) {
+      st.minigame = null;
+      st.phase = 'lobby';   // back to the picker
+      removeDisconnected(st);
     } else if (st.phase === 'minigameResults') {
       const duel = st.minigame.purpose === 'duel';
       st.minigame = null;
@@ -398,8 +468,9 @@ const HANDLERS = {
       : rankOf(groups);
     const delta = Object.fromEntries(mg.seats.map((s) => [s, 0]));
     const duel = mg.purpose === 'duel';
-    if (results.void) {
-      // nobody wins, nobody pays: delta stays all 0
+    const test = !!st.settings.testMode;
+    if (results.void || test) {
+      // nobody wins, nobody pays: delta stays all 0 (test mode: the results are shown, nothing counts)
     } else if (duel) {
       if (groups.length > 1 && groups[0].length === 1) {
         const [w] = groups[0], l = groups[1][0];
@@ -417,6 +488,7 @@ const HANDLERS = {
     mg.coinDelta = delta;
     st.phase = 'minigameResults';
     emit(c, { type: 'minigameResults', results: clone(results), coinDelta: { ...delta } });
+    if (test) return;
     for (const s of mg.seats) if (delta[s]) changeCoins(c, s, delta[s], duel ? 'duel' : 'minigame');
     const best = groups[0].map((s) => nameOf(c, s)).join(' & ');
     log(c, null, duel ? `Duell: ${best} gewinnt.` : `Minispiel: ${best} gewinnt.`);
