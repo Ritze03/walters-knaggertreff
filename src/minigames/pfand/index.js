@@ -6,7 +6,7 @@ import { HINT } from '../../ui/glyphs.js';
 export default {
   id: 'pfand',
   name: 'Pfandautomat',
-  instructions: 'Flaschen und Dosen mit Pfand-Logo rollen zum Einwurf: Wirf sie genau im grünen Fenster ein, 0,25 € pro Stück. Socken, Gläser und Döner will der Automat nicht, und zu früh oder zu spät klemmt er. Hämmere ihn dann wieder frei!',
+  instructions: 'Pfand-Flaschen im grünen Fenster einwerfen: 0,25 €.\nMüll (Socke, Glas, Döner): Wegwerfen (Q / B)!\nMate-Kiste: 1 €, aber nur GENAU MITTIG einwerfen!\nZu früh, zu spät, schief: klemmt! Hämmern (E / X)',
   controlHints: ['{key:Leertaste} / {A} Einwerfen', `${HINT.mgBack} Wegwerfen`, '{key:E} / {X} Hämmern (wenn er klemmt)'],
   durationMs: DURATION_MS,
   clientMount: mountPfand,

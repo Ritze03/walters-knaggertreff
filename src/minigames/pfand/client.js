@@ -168,6 +168,8 @@ function mountMain(ctx, profile) {
   box(k, root, SLOT_X + HALF.normal - 1, BELT_Y - 130, 4, 130, '#40e060');
   root.add([k.pos(SLOT_X, BELT_Y - 142), k.polygon([k.vec2(-14, -10), k.vec2(14, -10), k.vec2(0, 8)]), k.color(k.rgb('#40e060')), k.outline(3, k.rgb('#1b5e2a'))]);
   const itemLayer = root.add([k.pos(0, 0)]);
+  // dead-centre marker for the Mate-Kiste: only visible while a crate is near the window, drawn above the items
+  const centreMark = box(k, root, SLOT_X - 2, BELT_Y - 130, 4, 130, '#ffffff', { opacity: 0 });
   // machine on top of the items: the fed ones vanish behind its face
   const { m, light, disp, lcd } = buildMachine(k, root, MACH.x, MACH.y);
   const bon = box(k, m, 62, 484, 156, 1, '#ffffff', { outline: [2, '#c9c9c9'], opacity: 0 });
@@ -179,6 +181,18 @@ function mountMain(ctx, profile) {
   const jamBar = box(k, root, 130, 316, 400, 14, '#ff3b30', { radius: 5, opacity: 0 });
   const hammerHint = addHint(k, root, '{key:E} / {X} Hämmern!', 330, 352, { size: 26, outline: [4, '#3d0a05'], opacity: 0 });
   const fx = root.add([k.pos(0, 0)]);
+  // first-time callouts (once per run, ~2 s, one shared slot above the window)
+  const shownCallouts = new Set();
+  let callout = null, calloutBg = null, calloutAge = 0;
+  const showCallout = (id, text, y = 262) => {
+    if (shownCallouts.has(id)) return;
+    shownCallouts.add(id);
+    callout?.destroy(); calloutBg?.destroy();
+    callout = addHint(k, root, text, 400, y, { size: 26, color: '#ffe066' });
+    calloutBg = box(k, root, 400 - callout.width / 2 - 16, y - 24, callout.width + 32, 48, '#1b2a49', { radius: 12, opacity: 0.88, outline: [3, '#ffe066'] });
+    callout.destroy(); callout = addHint(k, root, text, 400, y, { size: 26, color: '#ffe066' });   // re-added so the text sits above the plate
+    calloutAge = 0;
+  };
   addHint(k, root, `{key:Leertaste} / {A} Einwerfen   ${HINT.mgBack} Wegwerfen`, 520, 700, { size: 19, outline: [3, '#2d3a45'] });
   const av = ctx.addAvatar(profile, { size: 76, showName: true });
   av.pos = k.vec2(110, 630);
@@ -211,6 +225,7 @@ function mountMain(ctx, profile) {
     audio.sfx('jam'); audio.sfx('error', { volume: 0.6 });
     av.bounce?.();
     setFlash('#ff3b30');
+    showCallout('jam', 'Klemmt! Hämmern ({key:E} / {X})!', 395);   // lower than the others: the jam banner sits at y 190-300
     if (item) { item.s = 'spit'; item.vx = -420; item.vy = -700; item.spin = 520; }
     const junkKinds = ['canNo', 'jar', 'doener', 'sock'];
     if (junkKinds.includes(why)) say('junk'); else say('jam');
@@ -319,6 +334,25 @@ function mountMain(ctx, profile) {
       else if (input.pressed('back')) toss();
     }
     for (const it of items) itemFrame(it, dt);
+    if (live && !done) {
+      let crateNear = false;
+      for (const it of items) {
+        if (it.s !== 'belt' || !it.obj) continue;
+        const dx = posAt(it, t) - SLOT_X;
+        if (dx > -330 && dx < HALF.normal) {
+          if (it.kind === 'crate') showCallout('crate', 'Mate-Kiste: genau mittig! 1 €');
+          else if (!isGood(it)) showCallout('junk', `Müll: Wegwerfen (${HINT.mgBack})`);
+        }
+        if (it.kind === 'crate' && dx > -HALF.normal - 120 && dx < HALF.normal + 20) crateNear = true;
+      }
+      centreMark.opacity = crateNear ? 0.9 : 0;
+    }
+    if (callout) {
+      calloutAge += dt;
+      const a = calloutAge < 1.5 ? 1 : Math.max(0, 1 - (calloutAge - 1.5) / 0.5);
+      callout.setOpacity(a); calloutBg.opacity = 0.88 * a;
+      if (calloutAge >= 2) { callout.destroy(); calloutBg.destroy(); callout = calloutBg = null; }
+    }
     if (live && !done && (t >= lastT + 900 || t >= DURATION_MS - 350)) {
       done = true; bonAge = 0;
       audio.sfx('stamp'); audio.sfx('fanfare', { volume: 0.5 });
