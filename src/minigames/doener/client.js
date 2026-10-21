@@ -3,6 +3,7 @@ import { createRng } from '../../contracts.js';
 import { textOpts } from '../font.js';
 import { box, disc, label, setText, ease, addHint } from '../draw.js';
 import lines from './lines.js';
+import { HINT } from '../../ui/glyphs.js';
 import { ING, KEYS, DURATION_MS, WRONG_LOCK_MS, OK_LOCK_MS, makeOrders, emptyWrap, addIngredient, matches, firstMistake, speedBonus, scoreOf } from './order.js';
 
 const INK = '#1b2a49';
@@ -14,7 +15,7 @@ const SPOTS = {   // emoji positions on the flatbread (relative to its centre), 
 // one tile per ingredient: how to add it
 const TILE_HINT = {
   fleisch: '{key:E} / {X} / {Y}', salat: '{key:W} / {DPAD} hoch', tomate: '{key:S} / {DPAD} runter',
-  zwiebel: '{key:A} / {DPAD} links', sosse: '{key:D} / {DPAD} rechts', scharf: '{key:Esc} / {B}',
+  zwiebel: '{key:A} / {DPAD} links', sosse: '{key:D} / {DPAD} rechts', scharf: HINT.mgBack,
 };
 const MOOD = { neutral: 0, happy: 1, angry: 2 };
 
