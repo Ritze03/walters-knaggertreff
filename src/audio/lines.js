@@ -92,6 +92,28 @@ export const LINES = {
     'Heute mit Schienenersatzverkehr, jetzt mit noch mehr Abenteuer!',
     'Der Ersatzbus fährt am Hintereingang ab, hinter dem Hintereingang.',
   ],
+  // --- Bahnhof board events ---
+  verspaetung: [
+    'Ihr Anschlusszug hat leider Verspätung. Grund: Ja.',
+    'Störung im Betriebsablauf. Wir bitten um Verständnis, nicht um Beschwerden.',
+    'Verspätung wegen vorheriger Verspätung.',
+  ],
+  weichenstoerung: [
+    'Weichenstörung! Die Weiche ist auch nur ein Mensch.',
+    'Sie verpassen Ihren Anschluss. Willkommen in der Realität.',
+  ],
+  fahrkartenkontrolle: [
+    'Fahrkartenkontrolle! Die Fahrkarten bitte.',
+    'Ihr Handy-Ticket hat ein Prozent Akku. Viel Glück.',
+  ],
+  fundbuero: [
+    'Im Fundbüro wurde etwas für dich abgegeben. Hoffentlich kein Zug.',
+    'Fundbüro: Gefunden wurde ein Gegenstand. Jetzt gehört er dir.',
+  ],
+  gleiswechsel: [
+    'Gleiswechsel! Der Zug fährt heute von einem ganz anderen Gleis.',
+    'Achtung, Gleisänderung! Bitte einmal quer durch alle Gleise.',
+  ],
   jam: [
     'Leergut wird nicht angenommen!',
     'Leergut wird nicht angenommen. Bitte Flasche wenden.',
