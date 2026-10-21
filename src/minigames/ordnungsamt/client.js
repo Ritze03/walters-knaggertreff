@@ -32,12 +32,15 @@ export function mountOrdnungsamt(ctx) {
   const hud = root.add([k.pos(0, 0)]);
   const banner = label(k, hud, '', 640, 330, { size: 74, color: '#ffffff', outline: [8, '#c0392b'], opacity: 0 });
   const bannerSub = label(k, hud, '', 640, 395, { size: 30, color: '#ffffff', outline: [5, '#1b2a49'], opacity: 0 });
-  const timerTxt = label(k, hud, '', 640, 706, { size: 26, color: '#ffffff', outline: [4, '#1b2a49'] });
   if (isPlayer) addHint(k, hud, '{key:E} / {key:Shift} / {X} Rempeln', 20, 704, { size: 20, anchor: 'left', outline: [4, '#1b2a49'] });
 
   // ---- players ----
   const crew = new Map();   // seat -> {seat, av, x, y, mark, bar, chip, hearts, ghost, puffAt}
-  const n = ctx.seats.length, chipW = Math.min(206, 1240 / n), chip0 = (ARENA.w - n * chipW) / 2;
+  // top HUD row: [timer][chip][chip]... centred together, so the timer sits in the HUD band instead of on the arena's bottom edge
+  const TIMER_W = 150;
+  const n = ctx.seats.length, chipW = Math.min(206, (1240 - TIMER_W) / n), chip0 = (ARENA.w - n * chipW + TIMER_W) / 2;
+  box(k, hud, chip0 - TIMER_W + 4, 6, TIMER_W - 8, 62, '#000000', { radius: 8, opacity: 0.45, outline: [3, '#ffffff'] });
+  const timerTxt = label(k, hud, '', chip0 - TIMER_W / 2, 37, { size: 22, color: '#ffffff', outline: [4, '#1b2a49'] });
   ctx.seats.forEach((seat, i) => {
     const e = { seat: seat.index, x: 640, y: 390, seen: false, puffAt: 0 };
     e.av = ctx.addAvatar(seat.profile, { size: 44, showName: true, parent: crowd });
@@ -49,7 +52,7 @@ export function mountOrdnungsamt(ctx) {
     e.stun.hidden = true; e.ghost.hidden = true; e.mark.hidden = true; e.bar.hidden = true;
     const cx = chip0 + i * chipW;
     box(k, hud, cx + 4, 6, chipW - 8, 62, '#000000', { radius: 8, opacity: 0.45, outline: [3, seat.profile.color] });
-    label(k, hud, seat.profile.name, cx + chipW / 2, 24, { size: 20, outline: [3, '#1b2a49'], width: chipW - 20 });
+    label(k, hud, seat.profile.name, cx + chipW / 2, 24, { size: chipW < 200 ? 17 : 20, outline: [3, '#1b2a49'], width: chipW - 20 });
     e.hearts = label(k, hud, '', cx + chipW / 2, 50, { size: 20 });
     crew.set(seat.index, e);
   });

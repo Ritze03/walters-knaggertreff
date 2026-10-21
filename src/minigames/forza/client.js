@@ -60,7 +60,8 @@ export function mountForza(ctx) {
   box(k, root, 760, 612, 170, 64, '#fff3a8', { radius: 6, outline: [3, '#c98a00'] });
   label(k, root, 'Summe', 845, 630, { size: 16, color: '#7a5200' });
   const totalTxt = label(k, root, '0', 845, 658, { size: 30, color: '#101010' });
-  if (!thumb) addHint(k, root, '{key:Enter} / {key:Leertaste} / {A} Download stoppen (bei 100 %)', 480, 703, { size: 18, outline: [3, '#0a246a'] });
+  // centred under the attempts row (x 300..930), clear of the avatar's name tag at the bottom left
+  if (!thumb) addHint(k, root, '{key:Enter} / {key:Leertaste} / {A} Download stoppen (bei 100 %)', 615, 703, { size: 18, outline: [3, '#0a246a'] });
   const av = ctx.addAvatar(profile, { size: 76, showName: true });
   av.pos = k.vec2(135, 640);
 
