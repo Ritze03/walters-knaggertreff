@@ -14,6 +14,9 @@ export const SLIDE_H = 0.6;
 export const SLIDE_T = 0.65;
 export const LANE_SPEED = 24;              // m/s sideways: one lane in 0.1 s
 const HALF_Z = 0.35, HALF_X = 0.4;
+export const SPAWN_GAP = 120;              // an oncoming train appears (out of the fog, with a horn) this many metres ahead of the runner
+export const PARKED_SHARE = 0.25;          // share of train rows that stand still instead (no roof / climb mechanic: they are just a wall in that lane)
+const r4 = (n) => Math.round(n * 10000) / 10000;
 
 /** Obstacle kinds: hw = half width (x), len (z, along the track), [y0, y1] = vertical extent. lane-dodge always works; `jump` / `slide` = also passable that way. */
 export const KINDS = {
@@ -30,11 +33,15 @@ export const laneX = (lane) => (lane - 1) * LANE_W;
 /** Speed in m/s after t seconds of running, before any stumble. */
 export const baseSpeed = (t) => 12 + 0.38 * t;
 
-/** The whole track: obstacles + Pfand bottles, both sorted by d (metres from the start). Pure function of the rng. */
+/**
+ * The whole track: obstacles + Pfand bottles, both sorted by d (metres from the start). Pure function of the rng.
+ * An obstacle with `v > 0` (only trains) is an ONCOMING train: `d` is where it spawns (front face, SPAWN_GAP ahead of the runner when it
+ * does) and from then on its front is at d - v * (sim time since the spawn), see frontOf(). With v = 0 it stands still at d.
+ */
 export function makeTrack(rng, length = 1500) {
   const obstacles = [], bottles = [];
   let oid = 0, bid = 0;
-  const obs = (type, lane, d) => { const o = { id: oid++, type, lane, d, len: KINDS[type].len }; obstacles.push(o); return o; };
+  const obs = (type, lane, d) => { const o = { id: oid++, type, lane, d: r4(d), len: KINDS[type].len, v: 0 }; obstacles.push(o); return o; };
   const line = (lane, d, n, y = 0.9) => { for (let i = 0; i < n; i++) bottles.push({ id: bid++, lane, d: d + i * 2.4, y }); return d + (n - 1) * 2.4; };
   const lerp = (a, b, f) => a + (b - a) * f;
   const sample = (list) => list[Math.floor(rng.next() * list.length)];
@@ -76,7 +83,12 @@ export function makeTrack(rng, length = 1500) {
       const free = sample(lanes);
       const taken = lanes.filter((l) => l !== free);
       const blocked = two ? taken : [sample(taken)];
-      for (const l of blocked) obs('train', l, d + (two ? 0 : rng.next() * 2));
+      for (const l of blocked) {
+        const dm = d + (two ? 0 : rng.next() * 2);        // where the runner is meant to meet it
+        const v = rng.next() < PARKED_SHARE ? 0 : r4(8 + rng.next() * 5 + f * 3);
+        // closing speed ~ runner + v, so over SPAWN_GAP the train covers ~ v / (runner + v) ~ 0.42 of it: spawn that far behind the meeting point
+        obs('train', l, v ? dm + SPAWN_GAP * 0.42 : dm).v = v;
+      }
       const open = lanes.filter((l) => !blocked.includes(l));
       end = Math.max(end, line(sample(open), d - 2, 6 + rng.int(0, 2)));
       if (!two) { const l = blocked[0]; const o = sample(lanes.filter((x) => x !== l)); obs('controller', o, d + 20); end = Math.max(end, d + 21); }
@@ -102,8 +114,19 @@ export function createRun(track) {
   return {
     track, t: 0, te: 0, dist: 0, speed: baseSpeed(0), lane: 1, x: 0, y: 0, vy: 0, slide: 0, stumble: 0, bottles: 0, hits: 0, done: false,
     oi: 0, bi: 0, taken: new Set(), hitSet: new Set(), lastHit: null,
+    spawned: new Map(), active: [],   // oncoming trains: id -> sim time of the spawn; the spawned ones that may still touch the runner
   };
 }
+
+/** Where the front face of an obstacle is right now (m); null = an oncoming train that has not spawned yet. A pure function of sim time. */
+export function frontOf(st, o) {
+  if (!o.v) return o.d;
+  const ta = st.spawned.get(o.id);
+  return ta === undefined ? null : r4(o.d - o.v * (st.t - ta));
+}
+
+/** Cheap stand-in for the thumbnails, which only know the remote runner's distance: assumes ~18 m/s of runner speed. */
+export const approxFront = (o, dist, runnerV = 18) => (!o.v ? o.d : dist < o.d - SPAWN_GAP ? null : o.d - o.v * ((dist - (o.d - SPAWN_GAP)) / runnerV));
 
 export const score = (st) => Math.round(st.dist) + st.bottles * BOTTLE_BONUS;
 export const heightOf = (st) => (st.slide > 0 && st.y <= 0.001 ? SLIDE_H : STAND_H);
@@ -143,16 +166,19 @@ export function step(st, dt, inp = {}) {
     if (st.y <= 0) { st.y = 0; st.vy = 0; ev.push({ k: 'land' }); }
   }
   st.dist += st.speed * dt;
+  // --- oncoming trains: spawn at the far end, then drive towards the runner
+  for (let i = st.oi; i < obstacles.length && obstacles[i].d < st.dist + SPAWN_GAP; i++) {
+    const o = obstacles[i];
+    if (o.v > 0 && !st.spawned.has(o.id)) { st.spawned.set(o.id, st.t); st.active.push(o); ev.push({ k: 'train', id: o.id, lane: o.lane, v: o.v }); }
+  }
   // --- collisions (obstacles) with the player's box: x +-HALF_X, z +-HALF_Z, y [y, y+h]
   const h = heightOf(st);
-  while (st.oi < obstacles.length && obstacles[st.oi].d + obstacles[st.oi].len < st.dist - HALF_Z - 1) st.oi++;
-  for (let i = st.oi; i < obstacles.length && obstacles[i].d < st.dist + HALF_Z + 1; i++) {
-    const o = obstacles[i];
-    if (st.hitSet.has(o.id)) continue;
+  const touch = (o, a) => {
+    if (st.hitSet.has(o.id)) return;
     const kd = KINDS[o.type];
-    if (st.dist + HALF_Z < o.d || st.dist - HALF_Z > o.d + o.len) continue;
-    if (Math.abs(st.x - laneX(o.lane)) >= kd.hw + HALF_X) continue;
-    if (st.y >= kd.y1 || st.y + h <= kd.y0) continue;
+    if (st.dist + HALF_Z < a || st.dist - HALF_Z > a + o.len) return;
+    if (Math.abs(st.x - laneX(o.lane)) >= kd.hw + HALF_X) return;
+    if (st.y >= kd.y1 || st.y + h <= kd.y0) return;
     st.hitSet.add(o.id);
     st.hits++;
     st.stumble = STUMBLE_T;
@@ -160,6 +186,13 @@ export function step(st, dt, inp = {}) {
     st.te = Math.max(0, st.te - 4);
     st.bottles -= Math.min(3, st.bottles);
     ev.push({ k: 'hit', type: o.type, id: o.id });
+  };
+  while (st.oi < obstacles.length && obstacles[st.oi].d + obstacles[st.oi].len < st.dist - HALF_Z - 1) st.oi++;
+  for (let i = st.oi; i < obstacles.length && obstacles[i].d < st.dist + HALF_Z + 1; i++) if (!obstacles[i].v) touch(obstacles[i], obstacles[i].d);
+  for (let j = st.active.length - 1; j >= 0; j--) {
+    const o = st.active[j], a = frontOf(st, o);
+    if (a + o.len < st.dist - HALF_Z - 3) { st.active.splice(j, 1); continue; }
+    touch(o, a);
   }
   // --- bottles
   while (st.bi < bottles.length && bottles[st.bi].d < st.dist - 3) st.bi++;
@@ -191,19 +224,25 @@ export function advance(st, dtReal, inp) {
 }
 
 /**
- * What lies ahead, per lane: the nearest relevant obstacle whose rear end is still in front of the player and the number of bottles in reach.
- * Returns an array of 3 { gap, type, jump, slide, clear } (gap = metres to the front face; clear = no obstacle within `range`).
+ * What lies ahead, per lane: the most urgent obstacle whose rear end is still in front of the player and the number of bottles in reach.
+ * Returns an array of 3 { gap, egap, eta, type, jump, slide, clear, v } (gap = metres to the front face right now; v = its speed towards us,
+ * 0 for everything that stands still; eta = seconds until it reaches us; egap = eta * our own speed, i.e. "gap as if it stood still" = the
+ * time-to-collision in metres, which is what a bot should compare against its reaction distance; clear = nothing within `range`).
+ * Oncoming trains count once they have spawned and their front is within `range`.
  */
 export function lookahead(st, range = 60) {
-  const out = Array.from({ length: LANES }, () => ({ gap: Infinity, type: null, jump: false, slide: false, clear: true, bottles: 0, o: null }));
+  const out = Array.from({ length: LANES }, () => ({ gap: Infinity, egap: Infinity, eta: Infinity, type: null, jump: false, slide: false, clear: true, bottles: 0, v: 0, o: null }));
   const { obstacles, bottles } = st.track;
-  for (let i = st.oi; i < obstacles.length && obstacles[i].d < st.dist + range; i++) {
-    const o = obstacles[i];
-    if (st.hitSet.has(o.id) || o.d + o.len < st.dist - HALF_Z) continue;
+  const sp = Math.max(1, st.speed);
+  const see = (o, front) => {
+    if (st.hitSet.has(o.id) || front + o.len < st.dist - HALF_Z) return;
     const slot = out[o.lane];
-    const gap = Math.max(0, o.d - st.dist);
-    if (gap < slot.gap) { const kd = KINDS[o.type]; Object.assign(slot, { gap, type: o.type, jump: !!kd.jump, slide: !!kd.slide, clear: false, o }); }
-  }
+    const gap = Math.max(0, front - st.dist), v = o.v || 0;
+    const eta = gap / (sp + v);
+    if (eta < slot.eta) { const kd = KINDS[o.type]; Object.assign(slot, { gap, egap: eta * sp, eta, type: o.type, jump: !!kd.jump, slide: !!kd.slide, clear: false, v, o }); }
+  };
+  for (let i = st.oi; i < obstacles.length && obstacles[i].d < st.dist + range; i++) if (!obstacles[i].v) see(obstacles[i], obstacles[i].d);
+  for (const o of st.active) { const f = frontOf(st, o); if (f < st.dist + range) see(o, f); }
   for (let i = st.bi; i < bottles.length && bottles[i].d < st.dist + range * 0.6; i++) {
     const b = bottles[i];
     if (!st.taken.has(b.id) && b.d > st.dist - 1) out[b.lane].bottles++;

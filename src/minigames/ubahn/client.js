@@ -24,7 +24,7 @@ export function mountUbahn(ctx) {
   root.add([k.pos(0, 0), k.rect(960, 720), k.color(k.rgb('#151a29'))]);
   const status = label(k, root, 'Die U-Bahn fährt ein…', 480, 360, { size: 40 });
 
-  let live = false, finished = false, failed = false, elapsed = 0, lastSay = -99, lastBottleSfx = -9, combo = 0, announced = -1, said15 = false;
+  let live = false, finished = false, failed = false, elapsed = 0, lastSay = -99, lastBottleSfx = -9, lastHorn = -9, combo = 0, announced = -1, said15 = false;
   let world = null, t3 = null, hud = null;
   let events = [];
 
@@ -86,7 +86,9 @@ export function mountUbahn(ctx) {
     for (const e of evs) {
       if (e.k === 'jump') audio.sfx('jump', { volume: 0.5, rate: 1.1 });
       else if (e.k === 'slide') audio.sfx('whoosh', { volume: 0.4, rate: 0.8 });
-      else if (e.k === 'lane') audio.sfx('whoosh', { volume: 0.18, rate: 1.4 + Math.random() * 0.3 });
+      else if (e.k === 'train') {   // an oncoming train just appeared at the far end: horn (louder when it is coming for our lane)
+        if (elapsed - lastHorn > 0.9) { lastHorn = elapsed; audio.sfx('go', { volume: e.lane === st.lane ? 0.4 : 0.22, rate: 0.5 + Math.random() * 0.06 }); }
+      } else if (e.k === 'lane') audio.sfx('whoosh', { volume: 0.18, rate: 1.4 + Math.random() * 0.3 });
       else if (e.k === 'bottle') {
         if (elapsed - lastBottleSfx > 0.7) combo = 0;
         combo = Math.min(combo + 1, 12);

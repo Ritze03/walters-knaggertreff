@@ -1,6 +1,6 @@
 // "U-Bahn-Surfers": the three.js scene. NO static `import 'three'` (it would pull three into the main bundle): everything comes from `THREE` = t3.THREE.
 // The run goes along -z: world z = -dist. Low-poly primitives and a few canvas textures only, nothing from outside.
-import { LANE_W, KINDS, laneX } from './sim.js';
+import { LANE_W, KINDS, laneX, frontOf } from './sim.js';
 
 const SEG = 24;            // length of one tunnel segment (m)
 const SEGS = 9;            // segments in the ring (216 m, a bit more than the fog distance)
@@ -113,6 +113,14 @@ export function buildWorld(t3, profile, track) {
     g.fillStyle = '#10131c'; g.fillRect(0, 0, w, h);
     fitText(g, 'NICHT EINSTEIGEN', w / 2, h / 2 + 2, w - 20, 34, '#ffb12b');
   });
+
+  const glowTex = canvasTex(64, 64, (g, w, h) => {
+    const r = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    r.addColorStop(0, 'rgba(255,252,220,1)'); r.addColorStop(0.25, 'rgba(255,240,170,0.55)'); r.addColorStop(1, 'rgba(255,230,140,0)');
+    g.fillStyle = r; g.fillRect(0, 0, w, h);
+  });
+
+  const glowMat = keep(new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 
   // ---------- tunnel ring
   const tileWall = lambert(0xffffff, { map: tileTex });
@@ -236,7 +244,8 @@ export function buildWorld(t3, profile, track) {
     return g;
   }
   const trainMats = () => ({ body: lambert(0xf2c81e), roof: lambert(0xc9a413), dark: lambert(0x1b2030), glass: lambert(0x2a3350) });
-  function buildTrain() {
+  /** an oncoming train (`moving`) gets two big headlight glows (they ignore the fog, so they show from far away) that flash alternately, a beacon and rolling wheels */
+  function buildTrain(moving) {
     const m = trainMats(), L = KINDS.train.len, g = new THREE.Group();
     mesh(box(2.0, 0.35, L), m.dark, g, 0, 0.3, -L / 2);
     mesh(box(2.1, 3.0, L), m.body, g, 0, 1.97, -L / 2);
@@ -245,8 +254,25 @@ export function buildWorld(t3, profile, track) {
     mesh(box(2.12, 0.14, L), lambert(0xd9381e), g, 0, 1.35, -L / 2);
     mesh(box(1.7, 0.95, 0.06), m.glass, g, 0, 2.6, 0.03);
     mesh(box(1.9, 0.3, 0.07), lambert(0x10131c), g, 0, 3.24, 0.04).material = lambert(0xffffff, { map: trainSign });
-    for (const e of [-1, 1]) mesh(sph(0.15), basic(0xfffbd0), g, e * 0.7, 1.0, 0.05);
     mesh(box(0.5, 0.2, 0.06), lambert(0x1b2030), g, 0, 0.75, 0.06);
+    const lamps = [], glows = [], wheels = [];
+    for (const e of [-1, 1]) {
+      lamps.push(mesh(sph(0.15), basic(moving ? 0xfffbd0 : 0x6a6e5a), g, e * 0.7, 1.0, 0.05));
+      if (!moving) continue;
+      const gl = mesh(plane(3.2, 3.2), glowMat, g, e * 0.7, 1.0, 0.25);
+      glows.push(gl);
+      for (const z of [-2, -5, -L + 2, -L + 5]) {   // wheels stick out below the side skirt
+        const w = mesh(cyl(0.34, 0.34, 0.12, 12), lambert(0x15171d), g, e * 1.1, 0.34, z);
+        mesh(box(0.5, 0.02, 0.09), lambert(0xc4cad6), w, 0, 0.065, 0);   // a spoke, so the rolling shows
+        w.rotation.z = Math.PI / 2;
+        wheels.push(w);
+      }
+    }
+    if (moving) {
+      const beacon = mesh(sph(0.16), basic(0xff7a1a), g, 0, 3.75, -0.6);
+      g.userData.beacon = beacon;
+    }
+    g.userData.glows = glows; g.userData.lamps = lamps; g.userData.wheels = wheels;
     return g;
   }
   function buildGate() {
@@ -312,8 +338,10 @@ export function buildWorld(t3, profile, track) {
   let oHi = 0, bHi = 0, shake = 0, tAnim = 0, camX = 0;
   const { obstacles, bottles } = track;
 
+  const movers = obstacles.filter((o) => o.v > 0);   // oncoming trains: built when they spawn, moved every frame
+  const gone = new Set();
   function addObstacle(o) {
-    const obj = BUILD[o.type](o.id);
+    const obj = BUILD[o.type](o.type === 'train' ? o.v > 0 : o.id);
     const kd = KINDS[o.type];
     obj.position.set(laneX(o.lane), 0, o.type === 'train' ? -o.d : -(o.d + kd.len / 2));
     scene.add(obj);
@@ -331,8 +359,23 @@ export function buildWorld(t3, profile, track) {
       if (s.idx !== idx) placeSeg(s, idx);
     }
     // obstacles + bottles streaming
-    while (oHi < obstacles.length && obstacles[oHi].d < dist + FAR) { const o = obstacles[oHi++]; if (o.d + o.len > dist - BACK) addObstacle(o); }
-    for (const [id, e] of live) if (e.o.d + e.o.len < dist - BACK) { scene.remove(e.obj); live.delete(id); }
+    while (oHi < obstacles.length && obstacles[oHi].d < dist + FAR) { const o = obstacles[oHi++]; if (!o.v && o.d + o.len > dist - BACK) addObstacle(o); }
+    for (const [id, e] of live) if (!e.o.v && e.o.d + e.o.len < dist - BACK) { scene.remove(e.obj); live.delete(id); }
+    for (const o of movers) {
+      if (gone.has(o.id)) continue;
+      const f = st.spawned ? frontOf(st, o) : null;
+      if (f === null) continue;
+      let e = live.get(o.id);
+      if (f + o.len < dist - 9) { if (e) { scene.remove(e.obj); live.delete(o.id); } gone.add(o.id); continue; }
+      if (!e) { addObstacle(o); e = live.get(o.id); }
+      e.obj.position.z = -f;
+      const u = e.obj.userData, flash = Math.sin(tAnim * 14 + o.id) > 0;
+      u.glows[0].visible = flash; u.glows[1].visible = !flash;
+      const near = Math.max(0.35, Math.min(1, (f - dist) / 60 + 0.35));   // swells as it closes in
+      for (const gl of u.glows) gl.scale.setScalar(0.7 + near * 1.3);
+      u.beacon.visible = Math.sin(tAnim * 9 + o.id) > -0.2;
+      for (const w of u.wheels) w.rotation.x = -(tAnim * o.v * 2.9) % (Math.PI * 2);
+    }
     while (bHi < bottles.length && bottles[bHi].d < dist + FAR) {
       const b = bottles[bHi++];
       if (b.d < dist - BACK || st.taken.has(b.id)) continue;

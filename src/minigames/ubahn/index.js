@@ -6,7 +6,7 @@ import { DURATION_MS } from './sim.js';
 export default {
   id: 'ubahn',
   name: 'U-Bahn-Surfers',
-  instructions: 'Der Zug fährt ein, du rennst durch den Tunnel! Wechsle die Spur, spring über E-Scooter und Pfandkisten, rutsch unter Absperrungen durch und weich Kontrolleuren und Zügen aus. Sammle Pfandflaschen: Distanz plus Pfand-Bonus zählt.',
+  instructions: 'Du rennst durch den Tunnel, und die Züge fahren dir entgegen: Wer hupt und blinkt, kommt gleich! Wechsle die Spur, spring über E-Scooter und Pfandkisten, rutsch unter Absperrungen durch und weich Kontrolleuren und Zügen aus. Sammle Pfandflaschen: Distanz plus Pfand-Bonus zählt.',
   controlHints: ['{key:←} / {key:→} / {LS} / {DPAD} Spur wechseln', '{key:Leertaste} / {A} Springen  {key:↓} Rutschen'],
   durationMs: DURATION_MS,
   preload: () => preload3D(),

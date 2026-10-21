@@ -1,7 +1,7 @@
 // "U-Bahn-Surfers": the small live thumbnail of another player (cheap Kaplay 2D, never a WebGL context): a top-down 3-lane strip with the
 // shared track scrolling by, that player's blob in its lane and the distance. Driven by update(p) with p = { d, l, b, h, s, sc }.
 import { box, label, setText, ease } from '../draw.js';
-import { makeTrack } from './sim.js';
+import { makeTrack, approxFront, SPAWN_GAP } from './sim.js';
 
 const X0 = 300, LW = 120, PY = 560, PX_PER_M = 7, WIN_BACK = 3, WIN_AHEAD = 76;
 const COLORS = { controller: '#27408b', scooter: '#2dd36f', pillar: '#dfe3ea', crate: '#1f5fcf', train: '#f2c81e', gate: '#f4d21e' };
@@ -36,15 +36,16 @@ export function mountThumb(ctx) {
     ties.forEach((t, i) => { t.pos = k.vec2(X0 + 6, (((i * 60 - shown * PX_PER_M) % 780) + 780) % 780 - 30); });
     let n = 0;
     for (const o of track.obstacles) {
-      if (o.d + o.len < shown - WIN_BACK) continue;
-      if (o.d > shown + WIN_AHEAD) break;
+      if (o.d > shown + SPAWN_GAP) break;
+      const f = approxFront(o, shown);   // oncoming trains drive towards the runner here as well (distance-driven, an estimate)
+      if (f === null || f + o.len < shown - WIN_BACK || f > shown + WIN_AHEAD) continue;
       if (n >= pool.length) break;
       const r = pool[n++];
       const hw = ((W[o.type] ?? 0.6) * LW) / 2.4;
-      const y = PY - (o.d + o.len - shown) * PX_PER_M;
+      const y = PY - (f + o.len - shown) * PX_PER_M;
       r.pos = k.vec2(X0 + LW * (o.lane + 0.5) - hw, y);
       r.width = hw * 2; r.height = Math.max(14, o.len * PX_PER_M);
-      r.color = k.rgb(COLORS[o.type] ?? '#ffffff');
+      r.color = k.rgb(o.v && Math.sin(performance.now() / 90) > 0 ? '#fff3a0' : COLORS[o.type] ?? '#ffffff');
     }
     for (; n < pool.length; n++) pool[n].pos = k.vec2(0, -999);
     let m = 0;
