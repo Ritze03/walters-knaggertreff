@@ -39,13 +39,25 @@ Hängt der Beitritt bei "Verbinde mit dem Spiel…"? Manche Netze (strenge Firme
 ### Bretter
 
 - **Späti-Kiez** - die Straße mit Döner, Pfand und Ordnungsamt
-- **Deutsche Bahn Hauptbahnhof** - kommt bald
+- **DB Hauptbahnhof** - Gleise, Verspätungen und Fundbüro
 
 ### Minispiele
 
 - **Forza lädt herunter** - stoppe den Download-Balken bei exakt 100 %
 - **Ordnungsamt-Flucht** - weich den Transportern aus und schubs deine Freunde rein
-- Mehr kommen (auch ein kurzes "Only Up").
+- **Aura-Farming** - sammle Aura und weich Hindernissen aus
+- **Sitzplatz-Krieg im ICE** - ergattere den letzten freien Platz
+- **Pfand-Tauziehen** - zieh die Gegner mit schnellen Tastendrücken über die Linie
+- **U-Bahn-Surfers** - renn durch den Tunnel und weich Zügen aus
+- **Bahnsteig-Chaos** - behaupte dich auf dem vollen Bahnsteig
+- **Nur nach oben: Knaggerturm** - spring und klettere so hoch wie möglich
+- **Pfandautomat** - gib das Leergut möglichst schnell ab
+- **Bürgeramt-Stempel** - stempel die Akten, bevor die Schlange wächst
+- **Doodle-Knagger** - hüpf von Plattform zu Plattform nach oben
+- **Döner mit alles** - bau den Döner nach Kundenwunsch zusammen
+- **Flappy Taube** - flattere durch die Lücken
+- **Schlager Hero** - triff die Noten im Takt
+- Weitere Minispiele folgen.
 
 ## Steuerung
 
