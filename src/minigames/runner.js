@@ -108,6 +108,8 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
     const { mod, desc } = cur;
     const self = selfSeat(), participant = isParticipant();
     if (!mod) { label(k, scene.obj, `Minispiel "${desc.id}" fehlt.`, SCREEN.w / 2, SCREEN.h / 2, { size: 36 }); return; }
+    // 3D modules may export `preload()` (e.g. () => preload3D()): fetch the lazy three.js chunk while the instructions are on screen
+    if (participant) { try { Promise.resolve(mod.preload?.()).catch(() => {}); } catch { /* optional */ } }
     const intro = buildIntro({ k, parent: scene.obj, mod, desc, state, participant, addAvatar: avatarFor(scene.obj) });
     const t0 = performance.now();
     let sentReady = false, wasReady = false;
@@ -145,12 +147,18 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
     let centerX = SCREEN.w / 2;
 
     // ---- mounting one instance on a positioned, scaled lane root
+    let hudSink = null, hudLast = null;   // a module with its own canvas mirrors the countdown (ctx.mirrorHud), the Kaplay one would sit below its canvas
     function mountLane(rect, view, seat) {
+      const stage = scene;   // the scene this lane belongs to (ctx.alive / ctx.onEnd)
       // the lane is clipped to its logical rect (a thumbnail must not paint over its neighbours)
       const lane = scene.obj.add([k.pos(rect.x, rect.y), k.scale(rect.scale), k.rect(logical.w, logical.h), k.mask('intersect')]);
       const ctx = {
         k, root: lane, view, seat, selfSeat: self, seats: seatObjs, mode: desc.mode, teams: desc.teams, seed: desc.seed, rng: createRng(desc.seed),
         logical, input, audio, addAvatar: avatarFor(lane), isBot: !!debug.bot, spectator: !participant, durationMs: mod.durationMs,   // the last two are extras beyond contracts section 10
+        rect: { x: rect.x, y: rect.y, w: logical.w * rect.scale, h: logical.h * rect.scale },   // the lane on the SCREEN (1280x720), for modules with their own canvas
+        alive: () => scene === stage && !destroyed,                                             // false once this stage was torn down
+        onEnd: (fn) => { if (scene === stage) stage.cleanups.push(fn); else { try { fn(); } catch (e) { warn('onEnd failed', e); } } },   // runs when the stage ends (before instance.destroy)
+        mirrorHud: view === 'main' ? (fn) => { hudSink = fn; hudLast = null; } : noop,         // fn({ countdown:{text,color,opacity,scale}|null, caption:string }), called on change
         sendProgress: view === 'main' && solo && participant ? (p) => { pendingP = p; } : noop,
         finish: view === 'main' && solo && participant ? finishSelf : noop,
       };
@@ -203,8 +211,16 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
 
     // ---- countdown overlay
     const cd = label(k, scene.obj, '', centerX, SCREEN.h / 2, { size: 220, color: '#ffd43b', outline: [14, '#14182a'], opacity: 0 });
-    let cdAge = 0;
-    const showCd = (text, color) => { cd.text = text; cd.color = k.rgb(color); cd.opacity = 1; cdAge = 0; };
+    let cdAge = 0, cdColor = '#ffd43b';
+    const showCd = (text, color) => { cd.text = text; cdColor = color; cd.color = k.rgb(color); cd.opacity = 1; cdAge = 0; };
+    function pushHud() {
+      if (!hudSink) return;
+      const h = { countdown: cd.opacity > 0 && cd.text ? { text: cd.text, color: cdColor, opacity: Math.round(cd.opacity * 100) / 100, scale: Math.round((cd.scale?.x ?? 1) * 100) / 100 } : null, caption: cur.mainCaption?.text ?? '' };
+      const key = JSON.stringify(h);
+      if (key === hudLast) return;
+      hudLast = key;
+      try { hudSink(h); } catch (e) { warn('mirrorHud sink threw', e); }
+    }
 
     // ---- solo plumbing
     function flushProgress() {
@@ -288,6 +304,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
           try { cur.main?.inst?.go?.(); } catch (e) { warn('go() threw', e); }
         }
       }
+      pushHud();
       // ?bot
       if (debug.bot && participant && cur.main?.inst) {
         let inj = null;

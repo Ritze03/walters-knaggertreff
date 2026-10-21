@@ -73,6 +73,10 @@ export const MINIGAMES = freeze({
   pfand:       { kind: 'solo',  min: 2, max: 6 },
   doener:      { kind: 'solo',  min: 2, max: 6 },
   buergeramt:  { kind: 'solo',  min: 2, max: 6 },
+  ubahn:       { kind: 'solo',  min: 2, max: 6 },   // U-Bahn-Surfers (3D runner, lazy three.js)
+  schlager:    { kind: 'solo',  min: 2, max: 6 },   // Schlager Hero (4-lane rhythm game on A/B/X/Y)
+  flappytaube: { kind: 'solo',  min: 2, max: 6 },   // Flappy Taube
+  doodle:      { kind: 'solo',  min: 2, max: 6 },   // Doodle-Knagger (endless platform jumper)
   ordnungsamt: { kind: 'arena', min: 2, max: 6 },
   aura:        { kind: 'arena', min: 2, max: 6 },
   bahnsteig:   { kind: 'arena', min: 2, max: 6 },
@@ -572,8 +576,8 @@ export const FIXED_LINES = freeze({
  *   sfx(name:SfxName, opts?:{ volume?:number /*0..1*\/, rate?:number /*pitch multiplier, 1 = normal*\/ }): void,
  *   music(track:(MusicTrack|null)): void,                       // crossfades; null stops; same track again = no restart
  *   say(lineIdOrText:string, opts?:{ rate?:number, pitch?:number, interrupt?:boolean }): void,
- *       // LINES id or raw German text. Web Speech de-DE with a small random pitch/rate wobble; no German voice => fall back to any voice, else silent;
- *       // ALWAYS also calls the onCaption handlers (the UI shows a caption bubble, which is the no-voice fallback).
+ *       // LINES id or raw German text. Plays a pre-rendered clip (public/voice/*.ogg, Piper, tools/voice) when one exists for that exact text, else silent;
+ *       // ALWAYS also calls the onCaption handlers (the UI shows a caption bubble, which is the no-voice fallback). Free text is fine.
  *   onCaption(handler:(text:string) => void): () => void,
  *   setMuted(m:boolean): void, isMuted(): boolean, toggleMuted(): boolean,   // persisted in KEYS.muted; mutes sfx+music+speech immediately
  *   setMasterVolume(v:number): void, getMasterVolume(): number,  // 0..1, persisted in KEYS.volume (default 0.7); mute wins over it
@@ -598,6 +602,31 @@ export const FIXED_LINES = freeze({
 //   interpolate in their own root.onUpdate. Clients do not send input themselves: the runner sends mgInput from input.takeFrame().
 //   mgState MUST be plain JSON (it is broadcast as-is, keep it small, positions rounded to 1 decimal), host-private (not saved), and MUST contain
 //   `t:number` (sim ms since go, hostStep advances it) and `done:boolean`. hostStep may mutate and return the same object. Absent seats get a zero InputFrame.
+//
+// OWN CANVAS / 3D MINIGAMES (runner extras, see src/minigames/three3d.js for the full API doc):
+//   * three.js is pinned in package.json and must only ever load lazily. NEVER `import ... from 'three'` statically in a file that src/minigames/<id>/index.js
+//     reaches (the registry pulls every index.js into the MAIN bundle). Use `const t3 = await mount3D(ctx)` from '../three3d.js' (it does the dynamic import;
+//     three then lands in its own chunk). `npm run build` must keep showing three only in a separate chunk.
+//   * clientMount must still return its instance synchronously: `const inst = { go, update, botInput, destroy }; mount3D(ctx).then((t3) => {...build scene...}).catch(fallback);
+//     return inst;`. Export `preload: () => preload3D()` on the module (optional field; runner calls it during the intro so the chunk is cached by go()).
+//   * mount3D puts a WebGL <canvas> exactly over the lane (ctx.rect) of the letterboxed Kaplay canvas: HiDPI (DPR cap 2), resize, pointer-events none, above Kaplay,
+//     below the DOM UI. Input still comes ONLY from ctx.input. HUD text: t3.label(...) on the DOM overlay (Kaplay text below the canvas is hidden). The runner mirrors
+//     its countdown and caption onto that overlay.
+//   * ONLY view 'main' may create a WebGL context (mount3D throws for 'thumb'). Thumbnails draw a cheap 2D Kaplay progress picture driven by update(p).
+//   * Lifecycle: the runner destroys the canvas for you (ctx.onEnd hook registered by mount3D) when the minigame ends, on results, on leaving and on remount; t3.destroy()
+//     is idempotent, call it from instance.destroy() too. Dispose what you create outside scene graph traversal (render targets, loaders' textures) yourself.
+//   * Any other module may bring its own DOM canvas the same way with ctx.rect / ctx.alive() / ctx.onEnd(fn) / ctx.mirrorHud(fn) (all documented on MinigameCtx).
+//
+// VOICE LINES (D22, D34): each game keeps its German lines in `src/minigames/<id>/lines.js`. PURE DATA, NO IMPORTS (a node script scans it to pre-render the clips):
+//     export default { start: ['Los geht\'s, Taube!', 'Flatter!'], hit: ['Autsch!'], win: ['Du bist die Taube!'], lose: ['Pfui.'] };
+//   = one default-exported plain object, each value an ARRAY OF STRINGS (German, short: <= ~60 chars, one sentence each, no placeholders/interpolation: every
+//   string is rendered to an audio clip as-is). Keys are free; use `start`, `win`, `lose` where they apply. Play with `ctx.audio.say(pick(lines.hit))`; pick with
+//   ctx.rng ONLY if it affects play, else Math.random is fine. say() always shows a caption, a clip only plays when `tools/voice` pre-rendered that exact text
+//   (the voice pass worker adds the clips), so just write lines and call say. Do not spam: rate-limit in your game (a few lines per run).
+//   Minigame workers NEVER edit src/audio, src/contracts.js, tests/e2e/helpers.js or src/minigames/runner.js (D34); ask the lead.
+//
+// CONTROL HINTS: tokens `{A} {B} {X} {Y} {LS} {DPAD} {key:Label}` (rendered as pad buttons / key caps; see src/ui/glyphs.js); a double space makes a wider gap.
+//   e.g. '{key:Enter} / {key:Leertaste} / {A} Download stoppen'. Plain text still works but looks unfinished.
 
 /** @typedef {{ placements:number[][], labels?:Object<string,string>, void?:boolean }} MinigameResults
  *  placements = groups of seat indices, BEST FIRST; seats in one group tie; every participant appears exactly once. Solo/FFA: [[2],[0,3],[1]].
@@ -620,6 +649,12 @@ export const FIXED_LINES = freeze({
  *   addAvatar(profile:PlayerProfile, opts?:{ size?:number, showName?:boolean, parent?:any }): any,   // goofy blob (D17), implemented in src/avatar/index.js
  *   sendProgress(p:Json): void, finish(r:{ score:number, label?:string }): void,                       // solo main only; no-ops otherwise
  *   isBot:boolean,
+ *   // runner extras (beyond the core fields above):
+ *   spectator:boolean, durationMs:number,
+ *   rect:{ x:number, y:number, w:number, h:number },   // this lane on the SCREEN (SCREEN.w x SCREEN.h px): solo main = left lane (scaled 0.8 with >3 opponents), thumb = its thumbnail, arena = full
+ *   alive():boolean,                                  // false once the stage this instance belongs to was torn down (use after any await)
+ *   onEnd(fn:() => void): void,                       // fn runs when the stage ends (minigame over / results / leave), just before instance.destroy(); runs at once if it already ended
+ *   mirrorHud(fn:(h:{ countdown:({ text:string, color:string, opacity:number, scale:number }|null), caption:string }) => void): void,   // main view only: the runner's 3-2-1 and "Fertig" caption, pushed on change, for modules whose own canvas covers the Kaplay one
  * }} MinigameCtx */
 
 /** @typedef {{
@@ -633,9 +668,10 @@ export const FIXED_LINES = freeze({
  *   id:string,                         // one of MINIGAME_IDS
  *   name:string,                       // German title
  *   instructions:string,               // German, 1-3 short sentences shown during minigameIntro
- *   controlHints:string[],             // German, e.g. ['WASD / Stick: Laufen', 'Leertaste / A: Springen']
+ *   controlHints:string[],             // German, with button tokens, e.g. ['{key:Enter} / {key:Leertaste} / {A} Download stoppen'] (see CONTROL HINTS below)
  *   durationMs:number,                 // play time after go()
- *   clientMount(ctx:MinigameCtx): MinigameInstance,
+ *   clientMount(ctx:MinigameCtx): MinigameInstance,   // sync; 3D games load async inside, see OWN CANVAS above
+ *   preload?(): (void|Promise<any>),                  // optional: runner calls it during the intro for participants (3D games: () => preload3D())
  *   hostInit?(o:{ seats:number[], seed:number, rng:Rng, mode:Mode, teams:(number[][]|null) }): ArenaState,   // arena/team only
  *   hostStep?(mg:ArenaState, inputsBySeat:Object<string,InputFrame>, dtMs:number): ArenaState,               // arena/team only
  *   hostResult?(mg:ArenaState): MinigameResults,                                                             // arena/team only
