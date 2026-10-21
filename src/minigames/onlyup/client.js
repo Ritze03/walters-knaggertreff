@@ -3,7 +3,7 @@ import { createRng } from '../../contracts.js';
 import { mount3D } from '../three3d.js';
 import { box, disc, label, decimal, ease, setText } from '../draw.js';
 import { C, DURATION_MS, BOT_NOISE, makeCourse, newState, step, botControl, supportBelow, angDiff } from './sim.js';
-import { buildWorld, makePlayer } from './world.js';
+import { buildWorld, makePlayer, makeOcclusion } from './world.js';
 import LINES from './lines.js';
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -117,6 +117,7 @@ function mountMain(ctx) {
     const { THREE } = t;
     const world = buildWorld(THREE, t.scene, course, decorRng);
     const me = makePlayer(THREE, profile);
+    const occl = makeOcclusion(THREE, t.camera, world.occluders);
     t.scene.add(me.group);
     const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 18), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
@@ -163,6 +164,7 @@ function mountMain(ctx) {
     // ---- per-frame
     let time = 0, acc = 0, jumpLatch = false, viewY = st.y, shake = 0, amt = 0, faceA = Math.PI, shownH = -1, shownB = -1, shownT = '';
     const camera = t.camera;
+    if (ctx.isBot) globalThis.__onlyup = { THREE, scene: t.scene, camera, st, course, player: me.group, world, occl };   // e2e / debugging only
     t.onFrame((dt) => {
       time += dt;
       // controls: the stick is relative to the camera
@@ -256,6 +258,7 @@ function mountMain(ctx) {
       const D = 9.6, sh = shake * 0.35;
       camera.position.set(st.x + Math.cos(camAng) * D + (Math.random() - 0.5) * sh, viewY + 4.9 + (Math.random() - 0.5) * sh, st.z + Math.sin(camAng) * D);
       camera.lookAt(st.x - Math.cos(camAng) * 2.2, viewY + 2.7, st.z - Math.sin(camAng) * 2.2);
+      occl.update(dt, me.group.position);   // fade whatever stands between the camera and the blob
 
       // HUD
       const h = Math.max(0, Math.round(st.y)), b = Math.round(st.best);
