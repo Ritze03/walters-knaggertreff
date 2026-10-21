@@ -285,7 +285,24 @@ function startRun({ gameId, profile, isHost, initial = null }) {
     if (isHost) scheduleHostTimers(st);
   }
 
-  const sendIntent = (intent) => session.sendIntent(intent);
+  // setReady is idempotent and the host silently ignores intents it cannot place (host link down, seat not rejoined yet): while the
+  // lobby still shows our seat differently from what we asked for (human click or ?bot), keep resending it.
+  let wantReady = null, readyTimer = null;
+  const READY_RESEND_MS = 1500;
+  function resendReady() {
+    readyTimer = cancel(readyTimer);
+    readyTimer = later(READY_RESEND_MS, () => {
+      readyTimer = null;
+      const st = run.state, me = st?.seats[run.selfSeat];
+      if (wantReady === null || !me || st.phase !== PHASE.lobby || !!me.ready === wantReady) { wantReady = null; return; }
+      session.sendIntent({ type: 'setReady', ready: wantReady });
+      resendReady();
+    });
+  }
+  const sendIntent = (intent) => {
+    if (intent?.type === 'setReady') { wantReady = !!intent.ready; resendReady(); }
+    session.sendIntent(intent);
+  };
 
   // -- ?bot: this tab plays its own seat, once per state revision
   function scheduleBot(state, selfSeat) {
