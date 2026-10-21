@@ -11,6 +11,7 @@ export const PX_PER_M = 5;
 export const C = {
   G: 1900,            // gravity px/s^2
   V_BOUNCE: 800,      // auto-bounce: rises 168 px
+  V_CRUMBLE: 850,     // a Pappe bounce is a bit STRONGER (rises ~190 px): a breaking platform only ever helps
   V_SPRING: 1260,     // Doener-Sprungfeder: rises ~418 px
   VX: 430,            // max steering speed
   JET_V: 820, JET_T: 1.0,   // Club-Mate-Rakete
@@ -54,12 +55,18 @@ function genNext(c) {
   const y = c.lastY - gap;
   const x = wrapX(c.lastX + (r2 * 2 - 1) * (190 + d * 50));
   const w = 112 - d * 30 + r3 * 14;                             // 112..126 -> 82..96
+  // SOFTLOCK GUARD: the platforms that are not 'crumble' always form a chain of normal jumps (gap < 168). A Pappe platform is only ever an EXTRA stepping
+  // stone between two links of that chain (it is generated first, so the array stays sorted by y), never a link itself: once it has broken, the climb
+  // can always go on over the normal platforms. (It used to replace a link: broken Pappe = a gap of 2 jumps = nobody could ever climb on.)
+  if (n > 9 && r4 > 0.9 - d * 0.14) {
+    const f = 0.35 + r6 * 0.4;
+    c.plats.push({ id: -n, x: wrapX(c.lastX + wrapDelta(c.lastX, x) * f + (r8 * 2 - 1) * 50), y: c.lastY - gap * f, w: w * 0.9, type: 'crumble', spring: false, broke: -1 });
+  }
   let type = 'static';
   if (n > 6 && r4 < 0.1 + d * 0.22) type = 'moving';
-  else if (n > 9 && r4 > 0.9 - d * 0.14) type = 'crumble';
   const p = { id: n, x, y, w, type, spring: false, broke: -1 };
   if (type === 'moving') { p.amp = 70 + r5 * 80; p.spd = 0.8 + r6 * 0.9; p.ph = r7 * 6.283; }
-  else if (type === 'static' && n > 3 && r5 < 0.09) p.spring = true;
+  else if (n > 3 && r5 < 0.09) p.spring = true;
   c.plats.push(p);
   // hazards sit between two platforms, on the climbing path
   if (n > 10 && r8 < 0.075 + d * 0.04) c.gulls.push({ x0: r9 * W, y: y + gap / 2, dir: r10 < 0.5 ? -1 : 1, spd: 150 + r3 * 70, ph: r2 * 6.283 });
@@ -87,6 +94,7 @@ function respawn(st, course) {
   for (const p of course.plats) if (p.type !== 'crumble' && p.y >= bestY + C.PENALTY_PX && p.y < pick.y + 0.5) pick = p;
   st.x = platX(pick, st.t); st.y = pick.y; st.vy = -C.V_BOUNCE; st.vx = 0; st.push = 0; st.jet = 0; st.stun = 0; st.doner = false;
   st.inv = 1.6; st.camY = st.y - 480; st.falls++;
+  for (const p of course.plats) if (p.type === 'crumble') p.broke = -1;   // safety net: broken Pappe is whole again, nobody is ever left without a way up
   st.ev.push('fall', 'bounce'); st.bounces++;
 }
 
@@ -122,7 +130,7 @@ export function step(st, course, inpX, dt = STEP) {
       if (dx > p.w / 2 + 14) continue;
       st.y = p.y;
       if (p.spring && dx <= C.SPRING_HALF) { st.vy = -C.V_SPRING; st.doner = true; st.springs++; st.ev.push('spring'); }
-      else { st.vy = -C.V_BOUNCE; st.ev.push('bounce'); }
+      else { st.vy = p.type === 'crumble' ? -C.V_CRUMBLE : -C.V_BOUNCE; st.ev.push('bounce'); }
       st.bounces++;
       if (p.type === 'crumble' && p.broke < 0) { p.broke = t; st.ev.push('crumble'); }
       break;

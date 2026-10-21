@@ -1,6 +1,7 @@
 // Doodle-Knagger: Kaplay client (main lane + thumbnail). Rules, course and the bot's brain live in sim.js (pure, node-tested).
 // Look: a squared notebook page, pencil lines that "boil" a little, marker-filled platforms. Everything is drawn immediate-mode
-// from the sim state (see drawWorld); the only game objects are the blob avatar(s) and the HUD.
+// from the sim state (see drawWorld); the only game objects are the blob avatar(s) and the HUD. The static artwork (paper, platforms, bottle, scribbles,
+// HUD panels) is baked once into textures by art.js, text is formatted once per distinct string: a lane frame is a handful of quads, not ~400 polygons.
 import { createRng } from '../../contracts.js';
 import { addHint } from '../draw.js';
 import { textOpts } from '../font.js';
@@ -8,8 +9,10 @@ import {
   W, H, C, STEP, DURATION_MS, makeCourse, newState, launch, step, newBot, botControl, heightM, fmtM, platX, gullPos, dronePos, wrapDelta,
 } from './sim.js';
 import LINES from './lines.js';
+import { createArt, PAPER, INK, PENCIL, GRID_STEP } from './art.js';
 
-const PAPER = '#fbf8ee', GRID = '#bcd5ea', INK = '#2b2f4a', PENCIL = '#7b8196';
+const MAX_CAM = 60000;   // sanity cap for a remote's camera (the best bot climbs ~5000 px in a round)
+const MARGIN = 120;   // px around the lane: course objects further off screen are not looked at (the course arrays are sorted by y)
 const HINT = '{key:←}{key:→} / {key:A}{key:D} / {LS} / {DPAD} Steuern';
 const DOODLE_TEXTS = ['sybau', 'Aura++', 'Döner?', 'x² + y²', 'Pfand!', 'Mittwoch', 'xD', 'Boing', 'ß ß ß', 'Das crazy'];
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -24,6 +27,7 @@ export function mountDoodle(ctx) {
   const bot = newBot(createRng((ctx.seed ^ Math.imul(ctx.selfSeat + 1, 0x9E3779B1)) >>> 0));
 
   const V = (x, y) => k.vec2(x, y);
+  const art = createArt(k, thumb ? 1 : 2);   // thumbnails are drawn at ~1/3 scale: a 1x texture is enough (and downsamples cleaner)
   const col = (c) => (typeof c === 'string' ? k.rgb(c) : c);
   let bt = 0;   // pencil "boil" frame
   const jit = (s) => Math.sin(s * 12.9898 + bt * 1.7) * 1.3;
@@ -35,39 +39,37 @@ export function mountDoodle(ctx) {
     for (let i = 0; i <= n; i++) { const f = i / n; pts.push([x1 + (x2 - x1) * f + jit(seed + i * 2), y1 + (y2 - y1) * f + jit(seed + i * 2 + 1)]); }
     line(pts, width, color, opacity);
   };
-  const rect = (x, y, w, h, color, o = {}) => k.drawRect({ pos: V(x, y), width: w, height: h, color: col(color), radius: o.radius, opacity: o.opacity ?? 1, outline: o.outline ? { width: o.outline[0], color: col(o.outline[1]) } : undefined, anchor: o.anchor });
-  const disc = (x, y, r, color, o = {}) => k.drawCircle({ pos: V(x, y), radius: r, color: col(color), opacity: o.opacity ?? 1, outline: o.outline ? { width: o.outline[0], color: col(o.outline[1]) } : undefined });
-  const ell = (x, y, rx, ry, color, o = {}) => k.drawEllipse({ pos: V(x, y), radiusX: rx, radiusY: ry, color: col(color), opacity: o.opacity ?? 1, angle: o.angle ?? 0, outline: o.outline ? { width: o.outline[0], color: col(o.outline[1]) } : undefined });
   const poly = (pts, color, o = {}) => k.drawPolygon({ pts: pts.map((p) => V(p[0], p[1])), color: col(color), opacity: o.opacity ?? 1, outline: o.outline ? { width: o.outline[0], color: col(o.outline[1]) } : undefined });
-  const txt = (str, x, y, size, color = INK, o = {}) => k.drawText({
-    text: str, pos: V(x, y), anchor: o.anchor ?? 'center', color: col(color), opacity: o.opacity ?? 1, angle: o.angle ?? 0,
-    outline: o.outline ? { width: o.outline[0], color: col(o.outline[1]) } : undefined, ...textOpts(k, size),
-  });
+  // text: Kaplay re-lays-out a string on every drawText; formatText once per distinct (string, size, colour, opacity) and only move it per frame
+  const fmtCache = new Map();
+  const txt = (str, x, y, size, color = INK, o = {}) => {
+    const op = Math.round((o.opacity ?? 1) * 20) / 20, anchor = o.anchor ?? 'center';
+    const key = `${size}|${color}|${op}|${anchor}|${str}`;
+    let ft = fmtCache.get(key);
+    if (!ft) {
+      if (fmtCache.size > 400) fmtCache.clear();
+      ft = k.formatText({ text: str, pos: V(0, 0), anchor, color: col(color), opacity: op, angle: 0, ...textOpts(k, size) });
+      fmtCache.set(key, ft);
+    }
+    ft.opt.pos = V(x, y); ft.opt.angle = o.angle ?? 0;
+    k.drawFormattedText(ft);
+  };
   /** draws fn(sx) for the screen x and its wrapped copies that touch the lane */
   const wrapped = (sx, half, fn) => { for (const off of [-W, 0, W]) { const x = sx + off; if (x + half > -4 && x - half < W + 4) fn(x); } };
 
   // ---- the notebook page ----
   function drawPaper(camY) {
-    rect(0, 0, W, H, PAPER);
-    const S = 36, oy = ((-camY % S) + S) % S;
-    for (let y = oy - S; y < H + S; y += S) line([[0, y], [W, y]], 1.4, GRID, 0.8);
-    for (let x = 0; x <= W; x += S) line([[x, 0], [x, H]], 1.4, GRID, 0.8);
-    // red margin + punched holes
-    line([[84, 0], [84, H]], 2.5, '#e8a0a0', 0.9);
-    line([[90, 0], [90, H]], 1.5, '#e8a0a0', 0.6);
+    const S = GRID_STEP, oy = ((-camY % S) + S) % S;
+    art.blit(art.paper(), 0, oy - S);
     const hy = ((-camY % 220) + 220) % 220;
-    for (let y = hy - 220; y < H + 220; y += 220) disc(34, y, 11, '#d4cfbd', { outline: [2, '#b5af99'] });
+    for (let y = hy - 220; y < H + 20; y += 220) if (y > -20) art.blit(art.hole(), 34, y, { anchor: 'center' });
     // scribbles that sit in the world (one per 360 px band)
     const c0 = Math.floor(camY / 360) - 1, c1 = Math.floor((camY + H) / 360) + 1;
     for (let ci = c0; ci <= c1; ci++) {
       const h1 = hash(ci), h2 = hash(ci + 99), x = 130 + h2 * (W - 260), y = ci * 360 + 60 + hash(ci + 7) * 240 - camY;
       const kind = Math.floor(h1 * 6);
-      if (kind === 0) { line([[x - 44, y + 12], [x - 40, y - 8], [x - 22, y - 22], [x - 2, y - 28], [x + 24, y - 20], [x + 44, y - 4], [x + 42, y + 12], [x - 44, y + 12]], 2.5, PENCIL, 0.6); }
-      else if (kind === 1) { const pts = []; for (let i = 0; i <= 10; i++) { const a = -Math.PI / 2 + (i * Math.PI * 4) / 5, r = i % 2 ? 11 : 26; pts.push([x + Math.cos(a) * r, y + Math.sin(a) * r]); } line(pts, 2.5, '#d9a441', 0.7); }
-      else if (kind === 2) { const pts = []; for (let i = 0; i < 60; i++) { const a = i * 0.45, r = 3 + i * 0.55; pts.push([x + Math.cos(a) * r, y + Math.sin(a) * r]); } line(pts, 2.2, '#6d8fd0', 0.55); }
-      else if (kind === 3) txt(DOODLE_TEXTS[Math.floor(hash(ci + 3) * DOODLE_TEXTS.length)], x, y, 30, PENCIL, { opacity: 0.55, angle: (h2 - 0.5) * 24 });
-      else if (kind === 4) { line([[x, y + 24], [x - 26, y - 2], [x - 20, y - 22], [x, y - 10], [x + 20, y - 22], [x + 26, y - 2], [x, y + 24]], 2.5, '#d9645a', 0.6); }
-      else { line(Array.from({ length: 21 }, (_, i) => [x + Math.cos((i / 20) * 6.283) * 24, y + Math.sin((i / 20) * 6.283) * 24]), 2.5, '#6d8fd0', 0.55); disc(x - 8, y - 6, 2.5, '#6d8fd0', { opacity: 0.6 }); disc(x + 8, y - 6, 2.5, '#6d8fd0', { opacity: 0.6 }); line([[x - 11, y + 6], [x, y + 13], [x + 11, y + 6]], 2.2, '#6d8fd0', 0.55); }
+      if (kind === 3) txt(DOODLE_TEXTS[Math.floor(hash(ci + 3) * DOODLE_TEXTS.length)], x, y, 30, PENCIL, { opacity: 0.55, angle: (h2 - 0.5) * 24 });
+      else art.blit(art.scribble(kind), x, y, { anchor: 'center' });
     }
   }
 
@@ -76,55 +78,36 @@ export function mountDoodle(ctx) {
   function drawPlat(p, camY, t) {
     const sy = p.y - camY;
     if (sy < -40 || sy > H + 40) return;
+    stats.plats++;
     const sx = platX(p, t), half = p.w / 2;
     const tb = p.broke >= 0 ? t - p.broke : -1;
     if (tb > C.CRUMBLE_S + 1.2) return;
     wrapped(sx, half + 20, (x) => {
-      const x0 = x - half;
       if (p.type === 'crumble') {
         // Pappe: a Pfand-carton that bounces you once, then falls apart
         const gone = tb > C.CRUMBLE_S;
         const fall = gone ? tb - C.CRUMBLE_S : 0, shake = tb >= 0 && !gone ? Math.sin(tb * 90) * 2 : 0;
+        const piece = art.crumbleHalf(half);
         for (const side of [0, 1]) {
           const cx = side ? x + half / 2 : x - half / 2, dy = fall * fall * 700 * (side ? 1 : 1.3), ang = gone ? (side ? 1 : -1) * fall * 160 : 0;
-          const hw = half;
-          k.pushTransform(); k.pushTranslate(V(cx + shake + (side ? fall * 40 : -fall * 40), sy + dy + 7)); k.pushRotate(ang);
-          rect(-hw / 2, -7, hw, C.PLAT_H, '#d8b27a', { radius: 3, outline: [3, INK], opacity: gone ? Math.max(0, 1 - fall / 1.2) : 1 });
-          if (!gone) { line([[-hw / 2 + 8, -2], [-hw / 2 + 14, 3], [-hw / 2 + 20, -2]], 2, '#8a6a3a'); }
-          k.popTransform();
+          art.blit(piece, cx + shake + (side ? fall * 40 : -fall * 40), sy + dy + 7, { anchor: 'center', angle: ang, opacity: gone ? Math.max(0, 1 - fall / 1.2) : 1 });
         }
         if (!gone) { txt('PFAND', x, sy + 7, 11, '#6e5226', { opacity: 0.9 }); pencil(x, sy + 1, x - 4, sy + 13, 2, INK, p.id); }
         return;
       }
-      const fill = p.type === 'moving' ? '#8ecbff' : '#9ae6a8';
-      rect(x0, sy, p.w, C.PLAT_H, fill, { radius: 5, outline: [3, INK] });
-      pencil(x0 + 4, sy + 4, x + half - 4, sy + 4, 1.6, '#ffffff', p.id * 3, 0.7);
-      for (let i = 1; i < 5; i++) pencil(x0 + (p.w * i) / 5, sy + 8, x0 + (p.w * i) / 5 - 6, sy + 13, 1.6, INK, p.id + i, 0.35);
-      if (p.type === 'moving') {
-        line([[x0 - 12, sy + 7], [x0 - 4, sy + 1]], 2.5, INK); line([[x0 - 12, sy + 7], [x0 - 4, sy + 13]], 2.5, INK); line([[x0 - 12, sy + 7], [x0 + 4, sy + 7]], 2.5, INK);
-        line([[x + half + 12, sy + 7], [x + half + 4, sy + 1]], 2.5, INK); line([[x + half + 12, sy + 7], [x + half + 4, sy + 13]], 2.5, INK); line([[x + half + 12, sy + 7], [x + half - 4, sy + 7]], 2.5, INK);
-      }
+      const e = art.plat(p.type, p.w);
+      art.blit(e, x - e.w / 2, sy - art.PLAT.padY);
       if (p.spring) {
         // Döner-Sprungfeder: coil + a Döner on top (stretched right after a bounce)
-        const a = springAnim.get(p.id), age = a === undefined ? 9 : k.time() - a, ext = age < 0.35 ? 1 + Math.sin((age / 0.35) * Math.PI) * 0.9 : 1, ch = 20 * ext;
-        const pts = [[x, sy]];
-        for (let i = 0; i < 6; i++) pts.push([x + (i % 2 ? 10 : -10), sy - (ch * (i + 1)) / 7]);
-        pts.push([x, sy - ch]);
-        line(pts, 3.5, '#d94a4a');
+        const a = springAnim.get(p.id), age = a === undefined ? 9 : k.time() - a, ext = age < 0.35 ? 1 + Math.sin((age / 0.35) * Math.PI) * 0.9 : 1, ch = 20 * ext, sc = ch / 20;
+        art.blit(art.coil(), x - 15, sy - 24 * sc, { height: 28 * sc });
         txt('🥙', x, sy - ch - 14, 34, '#ffffff');
       }
     });
   }
 
   // ---- pickups + hazards ----
-  function drawBottle(x, y, size, glow) {
-    if (glow) disc(x, y, size * 0.9, '#ffe066', { opacity: 0.35 });
-    rect(x - size * 0.28, y - size * 0.4, size * 0.56, size * 0.9, '#2e8b57', { radius: 5, outline: [2.5, INK] });
-    rect(x - size * 0.14, y - size * 0.66, size * 0.28, size * 0.3, '#2e8b57', { radius: 3, outline: [2.5, INK] });
-    rect(x - size * 0.17, y - size * 0.74, size * 0.34, size * 0.1, '#d9d9d9', { radius: 2, outline: [2, INK] });
-    rect(x - size * 0.22, y - size * 0.1, size * 0.44, size * 0.3, '#fff3b0');
-    txt('M', x, y + size * 0.05, Math.max(10, size * 0.28), INK);
-  }
+  const drawBottle = (x, y, size, glow) => art.blit(art.bottle(size, glow), x, y, { anchor: 'center' });
   function drawItem(it, camY, t) {
     if (it.taken) return;
     const sy = it.y - camY + Math.sin(t * 4 + it.x) * 4;
@@ -135,27 +118,18 @@ export function mountDoodle(ctx) {
     const gp = gullPos(g, t), sy = gp.y - camY;
     if (sy < -50 || sy > H + 50) return;
     wrapped(gp.x, 50, (x) => {
-      const d = g.dir, flap = Math.sin(t * 14 + g.ph);
-      poly([[x - d * 6, sy - 4], [x - d * 26, sy - 12 - flap * 22], [x - d * 36, sy - 6 - flap * 26], [x - d * 14, sy + 4]], '#e9eef5', { outline: [2.5, INK] });
-      ell(x, sy, 24, 12, '#ffffff', { outline: [3, INK] });
-      poly([[x - d * 22, sy - 3], [x - d * 40, sy - 8], [x - d * 24, sy + 5]], '#cfd8e3', { outline: [2.5, INK] });
-      disc(x + d * 20, sy - 7, 9, '#ffffff', { outline: [3, INK] });
-      poly([[x + d * 27, sy - 9], [x + d * 42, sy - 5], [x + d * 27, sy - 2]], '#ffb02e', { outline: [2.5, INK] });
-      disc(x + d * 22, sy - 9, 2.4, INK);
-      line([[x + d * 12, sy - 14], [x + d * 28, sy - 15]], 2.5, INK);   // grumpy brow
+      const o = { anchor: 'center', flipX: g.dir < 0 };
+      art.blit(art.gullWing(Math.sin(t * 14 + g.ph)), x, sy, o);   // the wing sits behind the body
+      art.blit(art.gullBody(), x, sy, o);
     });
   }
   function drawDrone(d, camY, t, near) {
     const dp = dronePos(d, t), sy = dp.y - camY;
     if (sy < -50 || sy > H + 50) return;
     wrapped(dp.x, 60, (x) => {
-      poly([[x - 8, sy + 10], [x + 8, sy + 10], [x + 34, sy + 100], [x - 34, sy + 100]], '#ffe066', { opacity: 0.22 });
+      art.blit(art.drone(Math.floor(t * 4) % 2), x, sy, { anchor: 'center' });   // cone + body + stems + light; only the rotor blades spin live
       const spin = Math.cos(t * 40);
-      for (const s of [-1, 1]) { line([[x + s * 30, sy - 16], [x + s * 30, sy - 8]], 2.5, INK); line([[x + s * (30 - 20 * spin), sy - 17], [x + s * (30 + 20 * spin), sy - 17]], 3, PENCIL); }
-      rect(x - 30, sy - 8, 60, 22, '#4b5563', { radius: 9, outline: [3, INK] });
-      rect(x - 22, sy - 3, 44, 8, '#9ca3af', { radius: 3 });
-      txt('AMT', x, sy + 1, 11, INK);
-      disc(x, sy + 14, 4, Math.floor(t * 4) % 2 ? '#ff4d4d' : '#4dc3ff', { outline: [1.5, INK] });
+      for (const s of [-1, 1]) line([[x + s * (30 - 20 * spin), sy - 17], [x + s * (30 + 20 * spin), sy - 17]], 3, PENCIL);
       if (near) txt('KNÖLLCHEN!', x, sy - 36, 20, '#c62828', { outline: [3, PAPER] });
     });
   }
@@ -167,19 +141,30 @@ export function mountDoodle(ctx) {
 
   // ---- scene ----
   const view = { camY: -480, t: 0, x: W / 2, feet: 0, vx: 0, vy: 0, jet: 0, doner: false, inv: 0, stun: 0, facing: 1, h: 0, falls: 0 };
+  // debug/test hook: what the last frame of this lane drew (e2e asserts the spectated thumbnails still show platforms)
+  const stats = { view: ctx.view, seat: ctx.seat, plats: 0, camY: view.camY };
+  (globalThis.__wkDoodle ??= {})[`${ctx.view}${ctx.seat}`] = stats;
+  /** indices of the entries of `arr` (sorted by y, climbing = descending y) whose y lies in [lo, hi] */
+  const eachIn = (arr, lo, hi, fn) => {
+    let a = 0, b = arr.length;
+    while (a < b) { const m = (a + b) >> 1; if (arr[m].y <= hi) b = m; else a = m + 1; }
+    for (let i = a; i < arr.length && arr[i].y >= lo; i++) fn(arr[i]);
+  };
   const bg = root.add([k.pos(0, 0)]);
   bg.onDraw(() => {
     bt = Math.floor(k.time() * 7);
-    drawPaper(view.camY);
-    for (const p of course.plats) drawPlat(p, view.camY, view.t);
-    for (const it of course.items) drawItem(it, view.camY, view.t);
-    for (const g of course.gulls) drawGull(g, view.camY, view.t);
-    for (const d of course.drones) drawDrone(d, view.camY, view.t, !thumb && Math.abs(dronePos(d, view.t).y - view.camY - (view.feet - view.camY)) < 260);
+    const camY = view.camY, lo = camY - MARGIN, hi = camY + H + MARGIN;
+    stats.plats = 0; stats.camY = camY;
+    drawPaper(camY);
+    eachIn(course.plats, lo, hi, (p) => drawPlat(p, camY, view.t));
+    eachIn(course.items, lo, hi, (it) => drawItem(it, camY, view.t));
+    eachIn(course.gulls, lo, hi, (g) => drawGull(g, camY, view.t));
+    eachIn(course.drones, lo, hi, (d) => drawDrone(d, camY, view.t, !thumb && Math.abs(dronePos(d, view.t).y - camY - (view.feet - camY)) < 260));
   });
 
   const av = ctx.addAvatar(profile, { size: C.R * 2, showName: false });
   const ghost = ctx.addAvatar(profile, { size: C.R * 2, showName: false });
-  ghost.pos = V(-999, -999);
+  ghost.pos = V(-999, -999); ghost.hidden = true;
 
   const fx = root.add([k.pos(0, 0)]);
   let live = false, over = false, finished = false, wall0 = 0, hintObj = null, lastSay = -99, sayN = 0;
@@ -203,16 +188,15 @@ export function mountDoodle(ctx) {
     }
     // HUD
     if (thumb) {
-      rect(130, 12, 700, 150, '#fff6a8', { radius: 8, outline: [4, '#c9a400'], opacity: 0.95 });
+      art.blit(art.hudThumb(), art.HUD.thumb.x, art.HUD.thumb.y);
       txt(fmtM(view.h), 480, 90, 118, INK, { outline: [8, '#fff6a8'] });
     } else {
-      rect(18, 14, 250, 74, '#fff6a8', { radius: 6, outline: [3, '#c9a400'], opacity: 0.95 });
-      rect(100, 6, 86, 20, '#f2e27a', { radius: 3, opacity: 0.9 });
+      art.blit(art.hudMain(), art.HUD.main.x, art.HUD.main.y);
       txt(fmtM(view.h), 143, 54, 50, INK, { outline: [5, '#fff6a8'] });
     }
     if (!thumb) {
       const left = live ? Math.max(0, Math.ceil((DURATION_MS - (performance.now() - wall0)) / 1000)) : Math.ceil(DURATION_MS / 1000);
-      disc(W - 52, 52, 34, PAPER, { outline: [3.5, INK], opacity: 0.95 });
+      art.blit(art.hudClock(), art.HUD.clock.x, art.HUD.clock.y);
       txt(`${left}`, W - 52, 52, left > 9 ? 36 : 44, left <= 5 ? '#c62828' : INK);
       if (view.falls > 0) txt(`Abstürze: ${view.falls}`, 143, 106, 18, '#c62828', { outline: [3, PAPER] });
     }
@@ -271,6 +255,8 @@ export function mountDoodle(ctx) {
 
     if (thumb) {
       if (remote) {
+        // a thumbnail never runs the sim, so nothing else extends its course: the remote can climb far past the start-up stretch
+        course.ensure(Math.min(view.camY, remote.c) - MARGIN);
         const f = 1 - Math.exp(-dt * 12);
         view.camY += (remote.c - view.camY) * f;
         view.x += wrapDelta(view.x, remote.x) * f;
@@ -307,7 +293,7 @@ export function mountDoodle(ctx) {
     av.hidden = blink;
     if (view.x < C.R + 8) { ghost.pos = V(view.x + W, sy); ghost.hidden = blink; }
     else if (view.x > W - C.R - 8) { ghost.pos = V(view.x - W, sy); ghost.hidden = blink; }
-    else ghost.pos = V(-999, -999);
+    else { ghost.pos = V(-999, -999); ghost.hidden = true; }
     ghost.setFacing?.(view.facing);
   });
 
@@ -323,7 +309,14 @@ export function mountDoodle(ctx) {
       input.takeFrame?.();
     },
     update(p) {
-      if (thumb && p && typeof p === 'object') remote = { x: p.x ?? W / 2, y: p.y ?? 0, h: p.h ?? 0, c: p.c ?? -480, t: p.t ?? 0, f: p.f ?? 0, d: p.d ?? 0 };
+      // untrusted wire data: one NaN / string in a packet must not poison the camera for good (the map would be gone for the rest of the round)
+      if (thumb && p && typeof p === 'object') {
+        const num = (v, d, lo, hi) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d);
+        remote = {
+          x: num(p.x, W / 2, -W, 2 * W), y: num(p.y, 0, -4 * H, 4 * H), h: num(p.h, 0, 0, 1e6), c: num(p.c, -480, -MAX_CAM, 4 * H),
+          t: num(p.t, 0, 0, 1e5), f: num(p.f, 0, 0, 1e4), d: p.d ? 1 : 0,
+        };
+      }
     },
     botInput() {
       if (thumb || !live || over) return {};
