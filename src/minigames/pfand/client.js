@@ -2,6 +2,7 @@
 import { createRng } from '../../contracts.js';
 import { box, disc, label, setText, ease, addHint } from '../draw.js';
 import LINES from './lines.js';
+import { HINT } from '../../ui/glyphs.js';
 import {
   DURATION_MS, RAMP_MS, SLOT_X, HALF, speedAt, makeSchedule, judgePress, posAt, halfOf, centsOf, isGood, euro,
 } from './seq.js';
@@ -9,9 +10,9 @@ import {
 const BELT_Y = 452;            // top of the belt = where the items stand
 const BELT_END = 650;          // missed items fall off here, the machine face starts right behind
 const MACH = { x: 660, y: 70 };
-const JAM_S = 1.6;             // lockout in seconds
-const HAMMER_S = 0.14;         // every X press takes this off the lockout
-const MIN_JAM_S = 0.45;        // ...but the machine stays stuck at least this long
+const JAM_S = 0.9;             // lockout in seconds (was 1.6)
+const HAMMER_S = 0.2;          // every X press takes this off the lockout (was 0.14)
+const MIN_JAM_S = 0.3;        // ...but the machine stays stuck at least this long (was 0.45)
 const STRIPE = 48;
 
 const WHY = {
@@ -178,7 +179,7 @@ function mountMain(ctx, profile) {
   const jamBar = box(k, root, 130, 316, 400, 14, '#ff3b30', { radius: 5, opacity: 0 });
   const hammerHint = addHint(k, root, '{key:E} / {X} Hämmern!', 330, 352, { size: 26, outline: [4, '#3d0a05'], opacity: 0 });
   const fx = root.add([k.pos(0, 0)]);
-  addHint(k, root, '{key:Leertaste} / {A} Einwerfen   {key:Esc} / {B} Wegwerfen', 520, 700, { size: 19, outline: [3, '#2d3a45'] });
+  addHint(k, root, `{key:Leertaste} / {A} Einwerfen   ${HINT.mgBack} Wegwerfen`, 520, 700, { size: 19, outline: [3, '#2d3a45'] });
   const av = ctx.addAvatar(profile, { size: 76, showName: true });
   av.pos = k.vec2(110, 630);
 
@@ -368,7 +369,7 @@ function mountMain(ctx, profile) {
         if (dx > halfOf(it)) continue;
         if (!it.plan) {
           const good = isGood(it) || it.kind === 'crate';
-          const sigma = it.kind === 'crate' ? 9 : 19 + (it.v - 300) * 0.02;
+          const sigma = it.kind === 'crate' ? 18 : 36 + (it.v - 240) * 0.04;   // scaled with the doubled window (was 9 / 19 + (v-300)*0.02)
           const noise = (botRng.next() + botRng.next() + botRng.next() - 1.5) * 2 * sigma;
           const slip = botRng.next() < 0.07 ? (botRng.next() < 0.5 ? -1 : 1) * (HALF.normal + 12) : 0;   // now and then it just mistimes
           it.plan = {

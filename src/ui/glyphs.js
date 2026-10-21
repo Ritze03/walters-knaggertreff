@@ -52,6 +52,7 @@ export const hintText = (str) => parseHint(str).map((p) => (p.type === 'text' ? 
 export const HINT = {
   confirm: '{key:Enter} / {A}',
   back: '{key:Esc} / {B}',
+  mgBack: '{key:Q} / {B}',   // minigames: Escape is dead there (src/input/index.js), back is Q
   move: '{key:←→} / {DPAD}',
   action: '{key:E} / {X}',
 };

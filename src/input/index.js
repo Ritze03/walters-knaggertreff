@@ -7,6 +7,11 @@ const KEYS = {
   confirm: ['Enter', 'NumpadEnter', 'Space'],
   back: ['Escape', 'Backspace'],
 };
+// While a minigame runs, Escape must do nothing (it exits browser fullscreen, and players mash it as "get me out"): back moves to Q.
+const MG_BACK = ['KeyQ', 'Backspace'];
+// ponytail: the runner marks its whole lifetime with class mg-play on #ui; reading it here avoids threading a mode flag through runner.js/main.js.
+const inMinigame = () => !!globalThis.document?.getElementById?.('ui')?.classList?.contains('mg-play');
+const keysOf = (a) => (a === 'back' && inMinigame() ? MG_BACK : KEYS[a]);
 const MOVE_KEYS = {
   left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
   up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'],
@@ -66,9 +71,9 @@ export function createInput({ target = globalThis.window, now = () => performanc
     if (PREVENT.has(e.code) && e.preventDefault) e.preventDefault();
     const fresh = !held.has(e.code);   // OS key auto-repeat must not count as new taps
     held.add(e.code);
-    for (const a of BUTTONS) if (KEYS[a].includes(e.code)) latched[a] = true; // so a tap shorter than a frame still counts
+    for (const a of BUTTONS) if (keysOf(a).includes(e.code)) latched[a] = true; // so a tap shorter than a frame still counts
     if (fresh) {
-      for (const a of ['confirm', 'back']) if (KEYS[a].includes(e.code)) tapped.add(a);
+      for (const a of ['confirm', 'back']) if (keysOf(a).includes(e.code)) tapped.add(a);
       for (const d of DIRS) if (MOVE_KEYS[d].includes(e.code)) tapped.add(d);
     }
   };
@@ -88,7 +93,7 @@ export function createInput({ target = globalThis.window, now = () => performanc
     if (injected?.move) { x = injected.move.x; y = injected.move.y; }
     const move = clampLen(x, y);
     const btn = {};
-    for (const a of BUTTONS) btn[a] = down(KEYS[a]) || pad[a] || !!injected?.[a];
+    for (const a of BUTTONS) btn[a] = down(keysOf(a)) || pad[a] || !!injected?.[a];
     state.move = move;
     Object.assign(state, btn);
     const all = {

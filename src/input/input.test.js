@@ -112,3 +112,38 @@ test('onNav latches a tap shorter than one frame (down+up between updates), key 
   input.update();
   assert.equal(got.filter((n) => n === 'down').length, 1);
 });
+
+const setMinigame = (on) => {
+  globalThis.document = on ? { getElementById: () => ({ classList: { contains: (c) => c === 'mg-play' } }) } : undefined;
+};
+
+test('Escape is dead while a minigame runs (class mg-play on #ui); Q is back there', () => {
+  setPads(); setMinigame(true);
+  try {
+    const { t, input } = mk();
+    const got = [];
+    input.onNav((n) => got.push(n));
+    key(t, 'keydown', 'Escape'); input.update();
+    assert.ok(!input.state.back && !input.pressed('back'));
+    assert.deepEqual(got, []);
+    assert.ok(!input.takeFrame().pressed.back);
+    key(t, 'keyup', 'Escape');
+    key(t, 'keydown', 'KeyQ'); input.update();
+    assert.ok(input.state.back && input.pressed('back'));
+    assert.deepEqual(got, ['back']);
+    assert.ok(input.takeFrame().pressed.back);
+  } finally { setMinigame(false); }
+});
+
+test('Escape still gives back (nav + state) outside a minigame, Q does not', () => {
+  setPads(); setMinigame(false);
+  const { t, input } = mk();
+  const got = [];
+  input.onNav((n) => got.push(n));
+  key(t, 'keydown', 'KeyQ'); input.update();
+  assert.ok(!input.state.back);
+  key(t, 'keyup', 'KeyQ');
+  key(t, 'keydown', 'Escape'); input.update();
+  assert.ok(input.state.back && input.pressed('back'));
+  assert.deepEqual(got, ['back']);
+});
