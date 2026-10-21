@@ -5,7 +5,12 @@
 //  - `action` = "Jacke werfen": claims every seat within JACKET_R of you and locks them (RESERVIERT) for LOCK_MS. Cooldown JACKET_CD_MS.
 //  - The Schaffner patrols the aisle; touching him flings you away and stuns you.
 //  - At DURATION_MS the team with more seats wins; equal seats is a draw.
+// OWNER-AUTHORITATIVE MOVEMENT (contracts section 10): every human client simulates its OWN body with stepBody() (tables are static obstacles, so the owner pushes itself out of them)
+//  and reports it (mgOwn -> hostAdopt). The host trusts the report for the body (x y vx vy kx ky fx fy cd stun + the jacket serial jn) and keeps resolving everything else: the jacket
+//  claim + lock (triggered by a new `jn`, at the position of the report that carried it), seat painting, the Schaffner (fling + stun delivered to the victim as an impulse, owner.js pushImp),
+//  team colours, events. Seats without a fresh report (host-run test bots, disconnected/stale owners) are driven by their input frame exactly as before.
 import { createRng } from '../../contracts.js';
+import { adoptFields, isOwned, pushImp } from '../owner.js';
 
 export const DURATION_MS = 35000;
 export const ARENA = { w: 1280, h: 720, x0: 60, y0: 100, x1: 1220, y1: 640 };
@@ -54,7 +59,7 @@ export function hostInit({ seats, seed, rng, teams }) {
     members.forEach((s, i) => {
       const x = ti === 0 ? 130 : 1150;
       const y = AISLE.cy + (i - (members.length - 1) / 2) * 60;
-      ps.push({ s, tm: ti, x, y, vx: 0, vy: 0, kx: 0, ky: 0, fx: ti === 0 ? 1 : -1, fy: 0, cd: 0, stun: 0, bi: 0 });
+      ps.push({ s, tm: ti, x, y, vx: 0, vy: 0, kx: 0, ky: 0, fx: ti === 0 ? 1 : -1, fy: 0, cd: 0, stun: 0, bi: 0, jn: 0, jp: 0, jx: 0, jy: 0, ia: 0 });
     });
   });
   ps.sort((a, b) => a.s - b.s);
@@ -62,7 +67,7 @@ export function hostInit({ seats, seed, rng, teams }) {
     t: 0, done: false, dur: DURATION_MS, teams: tm, ps,
     o: Array(SEAT_COUNT).fill(-1), lk: Array(SEAT_COUNT).fill(0), fc: Array(SEAT_COUNT).fill(0),
     sc: { x: r1(300 + r.next() * 600), y: AISLE.cy, d: r.next() < 0.5 ? -1 : 1, pz: 0, np: 4500 },
-    eid: 0, ev: [], rs: r.state(),
+    eid: 0, ev: [], rs: r.state(), imp: [], iid: 0,
   };
 }
 
@@ -75,7 +80,8 @@ export function counts(mg) {
   return c;
 }
 
-function pushOutOfRect(p, cx, cy, hw, hh) {
+/** pushes the body `p` (a disc of radius C.R) out of the table rectangle centred at cx,cy (half sizes hw,hh) */
+export function pushOutOfRect(p, cx, cy, hw, hh) {
   const nx = clamp(p.x, cx - hw, cx + hw), ny = clamp(p.y, cy - hh, cy + hh);
   const dx = p.x - nx, dy = p.y - ny, d = Math.hypot(dx, dy);
   if (d >= C.R) return;
@@ -86,6 +92,51 @@ function pushOutOfRect(p, cx, cy, hw, hh) {
     return;
   }
   p.x += (dx / d) * (C.R - d); p.y += (dy / d) * (C.R - d);
+}
+
+/** tables are static obstacles: push the body out of every one of them */
+export function pushOutTables(p) {
+  for (const t of TABLES) pushOutOfRect(p, t.x, t.y, TABLE.w / 2, TABLE.h / 2);
+}
+
+/**
+ * One tick of a player's body (pure; the host and the owner's client run the very same math). Timers count down, then, unless `env.passive`:
+ * facing from the stick, velocity easing; then knockback decay and dead-reckoned position, clamped to the arena; tables push the body out (unless `env.tables === false`:
+ * the host does its own table pass later in its tick); finally the jacket throw start (cooldown set).
+ * `env.passive` = the host stepping an OWNED seat: the owner already did the input-driven part and reported the result, so only timers, decay and dead reckoning run.
+ * `f` is an InputFrame (move + pressed). @returns true when a jacket was thrown this tick (the owner increments its serial `jn` then; the host claims seats).
+ */
+export function stepBody(p, f, dtMs, env = {}) {
+  const sec = dtMs / 1000;
+  p.cd = Math.max(0, p.cd - dtMs); p.stun = Math.max(0, p.stun - dtMs);
+  if (!env.passive) {
+    let mx = f.move?.x ?? 0, my = f.move?.y ?? 0;
+    const ml = Math.hypot(mx, my);
+    if (ml > 1) { mx /= ml; my /= ml; }
+    const dl = Math.min(ml, 1);
+    if (dl > 0.2 && p.stun === 0) { p.fx = r2(mx / dl); p.fy = r2(my / dl); }
+    const k = Math.min(1, sec * C.ACCEL), ctl = p.stun > 0 ? 0 : 1;
+    p.vx += (mx * C.SPEED * ctl - p.vx) * k;
+    p.vy += (my * C.SPEED * ctl - p.vy) * k;
+  }
+  const decay = Math.pow(0.5, dtMs / C.KB_HALF_MS);
+  p.kx *= decay; p.ky *= decay;
+  p.x = clamp(p.x + (p.vx + p.kx) * sec, ARENA.x0, ARENA.x1);
+  p.y = clamp(p.y + (p.vy + p.ky) * sec, ARENA.y0, ARENA.y1);
+  if (env.tables !== false) pushOutTables(p);
+  if (!env.passive && f.pressed?.action && p.cd === 0 && p.stun === 0) { p.cd = C.JACKET_CD_MS; return true; }
+  return false;
+}
+
+/** jacket drop at (x, y): claims + locks every unlocked seat close by */
+function claimJacket(mg, p, x, y) {
+  let n = 0;
+  for (let i = 0; i < SEAT_COUNT; i++) {
+    const s = SEATS[i];
+    if (Math.hypot(s.x - x, s.y - y) > C.JACKET_R || mg.lk[i] > 0) continue;
+    mg.o[i] = p.tm; mg.lk[i] = C.LOCK_MS; mg.fc[i] = 0; n++;
+  }
+  pushEv(mg, { k: 'j', s: p.s, x: r1(x), y: r1(y), n });
 }
 
 /** Advances the game by dtMs. `inputs`: seat -> InputFrame (missing seat = no input). Mutates and returns mg. */
@@ -99,34 +150,12 @@ export function hostStep(mg, inputs, dtMs) {
     if (mg.fc[i] > 0) mg.fc[i] = Math.max(0, mg.fc[i] - dtMs);
   }
 
-  // --- players ---
+  // --- players: an owned seat keeps only timers + dead reckoning (its body comes from hostAdopt) and claims its jacket when the owner reported a new serial;
+  //     the others follow their input frame (a pressed action throws the jacket) ---
   for (const p of mg.ps) {
-    const f = inputs?.[p.s] ?? ZERO;
-    p.cd = Math.max(0, p.cd - dtMs); p.stun = Math.max(0, p.stun - dtMs); p.bi = Math.max(0, p.bi - dtMs);
-    let mx = f.move?.x ?? 0, my = f.move?.y ?? 0;
-    const ml = Math.hypot(mx, my);
-    if (ml > 1) { mx /= ml; my /= ml; }
-    const dl = Math.min(ml, 1);
-    if (dl > 0.2 && p.stun === 0) { p.fx = r2(mx / dl); p.fy = r2(my / dl); }
-    const k = Math.min(1, sec * C.ACCEL), ctl = p.stun > 0 ? 0 : 1;
-    p.vx += (mx * C.SPEED * ctl - p.vx) * k;
-    p.vy += (my * C.SPEED * ctl - p.vy) * k;
-    const decay = Math.pow(0.5, dtMs / C.KB_HALF_MS);
-    p.kx *= decay; p.ky *= decay;
-    p.x = clamp(p.x + (p.vx + p.kx) * sec, ARENA.x0, ARENA.x1);
-    p.y = clamp(p.y + (p.vy + p.ky) * sec, ARENA.y0, ARENA.y1);
-
-    // jacket drop: claim + lock everything close by
-    if (f.pressed?.action && p.cd === 0 && p.stun === 0) {
-      p.cd = C.JACKET_CD_MS;
-      let n = 0;
-      for (let i = 0; i < SEAT_COUNT; i++) {
-        const s = SEATS[i];
-        if (Math.hypot(s.x - p.x, s.y - p.y) > C.JACKET_R || mg.lk[i] > 0) continue;
-        mg.o[i] = p.tm; mg.lk[i] = C.LOCK_MS; mg.fc[i] = 0; n++;
-      }
-      pushEv(mg, { k: 'j', s: p.s, x: r1(p.x), y: r1(p.y), n });
-    }
+    p.bi = Math.max(0, p.bi - dtMs);   // Schaffner immunity: host-only (the owner's body has no bi)
+    if (stepBody(p, inputs?.[p.s] ?? ZERO, dtMs, { passive: isOwned(p, mg.t), tables: false })) claimJacket(mg, p, p.x, p.y);
+    while (p.jp > 0) { p.jp--; claimJacket(mg, p, p.jx, p.jy); }   // one claim per reported serial, at the position of the report that carried it
   }
 
   // --- players push each other apart a little; tables are obstacles ---
@@ -135,9 +164,10 @@ export function hostStep(mg, inputs, dtMs) {
     const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
     if (d >= 2 * C.R || d < 0.001) continue;
     const push = (2 * C.R - d) / 2, nx = dx / d, ny = dy / d;
-    a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push;
+    if (!isOwned(a, mg.t)) { a.x -= nx * push; a.y -= ny * push; }   // an owned seat does its half itself, client-side
+    if (!isOwned(b, mg.t)) { b.x += nx * push; b.y += ny * push; }
   }
-  for (const p of mg.ps) for (const t of TABLES) pushOutOfRect(p, t.x, t.y, TABLE.w / 2, TABLE.h / 2);
+  for (const p of mg.ps) pushOutTables(p);
 
   // --- Schaffner ---
   let rng = null;
@@ -161,8 +191,8 @@ export function hostStep(mg, inputs, dtMs) {
     const dx = p.x - sc.x, dy = p.y - sc.y, d = Math.hypot(dx, dy);
     if (d >= C.SCH_R + C.R) continue;
     const nx = d > 0.001 ? dx / d : 0, ny = d > 0.001 ? dy / d : 1;
-    p.kx += nx * C.SCH_KB; p.ky += ny * C.SCH_KB;
-    p.stun = C.SCH_STUN_MS; p.bi = C.SCH_IMMUNE_MS;
+    pushImp(mg, p, p.s, { kx: nx * C.SCH_KB, ky: ny * C.SCH_KB, st: C.SCH_STUN_MS });   // the victim's owner applies it locally and acks; the host copy gets the same hit
+    p.bi = C.SCH_IMMUNE_MS;
     pushEv(mg, { k: 'b', s: p.s, x: r1(p.x), y: r1(p.y) });
   }
 
@@ -181,6 +211,33 @@ export function hostStep(mg, inputs, dtMs) {
   if (rng) mg.rs = rng.state();
   if (mg.t >= mg.dur) mg.done = true;
   return mg;
+}
+
+// The fields an owner reports. kin = kinematic: ignored until the owner has acked the latest impulse (a report from before a hit must not overwrite the knockback).
+// jn = the jacket serial: the owner counts its jacket throws, a new value tells the host "claim the seats around my reported position now". Team (tm), bi, jp/jx/jy, ia are host-owned.
+const OWNED = {
+  x: { lo: ARENA.x0, hi: ARENA.x1, kin: true }, y: { lo: ARENA.y0, hi: ARENA.y1, kin: true },
+  vx: { lo: -400, hi: 400, kin: true }, vy: { lo: -400, hi: 400, kin: true },           // walking speed is 285
+  kx: { lo: -2500, hi: 2500, kin: true }, ky: { lo: -2500, hi: 2500, kin: true },       // two stacked Schaffner flings are ~2000
+  fx: { lo: -1, hi: 1, dp: 2, kin: true }, fy: { lo: -1, hi: 1, dp: 2, kin: true },
+  cd: { lo: 0, hi: C.JACKET_CD_MS, kin: true }, stun: { lo: 0, hi: C.SCH_STUN_MS * 2, kin: true },
+  jn: { lo: 0, hi: 1e6, serial: true },
+};
+
+/** Host: adopt one owner report (runner calls it once per fresh mgOwn report, before the sim batch). Whitelist + clamp only. A reported position inside a table is pushed out
+ *  (tables are static, an honest owner never reports one; this keeps seat painting and the jacket claim exact). A new `jn` queues one jacket claim (p.jp) at the reported position. */
+export function hostAdopt(mg, seat, report) {
+  const p = mg.ps.find((q) => q.s === seat);
+  const res = adoptFields(p, report, OWNED, mg.t);
+  if (!res) return res;
+  if (!res.gated) pushOutTables(p);
+  if (res.changed.includes('jn')) {
+    // a gated report (it predates a Schaffner hit) did not move p; the throw still happened where the report says
+    const fin = (v) => typeof v === 'number' && Number.isFinite(v);
+    const at = res.gated && fin(report.x) && fin(report.y) ? { x: clamp(report.x, ARENA.x0, ARENA.x1), y: clamp(report.y, ARENA.y0, ARENA.y1) } : p;
+    p.jp = (p.jp ?? 0) + 1; p.jx = at.x; p.jy = at.y;
+  }
+  return res;
 }
 
 /** Ranking: one group per team, best first; equal seat counts => everybody in one group (draw). */
