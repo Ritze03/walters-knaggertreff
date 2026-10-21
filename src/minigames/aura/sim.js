@@ -5,7 +5,11 @@
 //    spill is locked for them for EX_MS, so the bumper - or anyone nearby - gets first dibs). A fresh victim is bump-proof for BUMP_INV_MS.
 //  - aura is never negative and a bump conserves it: aura lost = value of the orbs spilled.
 //  - most aura at the end wins; equal aura ties.
+// OWNER-AUTHORITATIVE MOVEMENT (contracts section 10): every human client simulates its OWN body with stepBody() and reports it (mgOwn -> hostAdopt). The host trusts the report
+//  for the body (x y vx vy kx ky fx fy dash cd stun + the dash serial dn) and keeps resolving everything else: bumps (delivered to the victim as impulses, owner.js pushImp),
+//  orbs, aura, binv, events. Seats without a fresh report (host-run test bots, disconnected/stale owners) are driven by their input frame exactly as before.
 import { createRng } from '../../contracts.js';
+import { adoptFields, isOwned, pushImp } from '../owner.js';
 
 export const DURATION_MS = 30000;
 export const ARENA = { w: 1280, h: 720, x0: 40, y0: 90, x1: 1240, y1: 690 };   // x0..y1 = where players may walk
@@ -39,9 +43,9 @@ export function hostInit({ seats, seed, rng }) {
   const ps = seats.map((s, i) => {
     const a = rot + (i / seats.length) * Math.PI * 2;
     const dx = Math.cos(a), dy = Math.sin(a);
-    return { s, x: r1(cx + dx * 380), y: r1(cy + dy * 220), vx: 0, vy: 0, kx: 0, ky: 0, fx: r2(-dx), fy: r2(-dy), dash: 0, cd: 0, stun: 0, binv: 0, aura: 0, dh: [] };
+    return { s, x: r1(cx + dx * 380), y: r1(cy + dy * 220), vx: 0, vy: 0, kx: 0, ky: 0, fx: r2(-dx), fy: r2(-dy), dash: 0, cd: 0, stun: 0, binv: 0, aura: 0, dh: [], dn: 0, ia: 0 };
   });
-  const mg = { t: 0, done: false, dur: DURATION_MS, ps, orbs: [], next: 600, nid: 1, eid: 0, gold: 0, ev: [], rs: 0 };
+  const mg = { t: 0, done: false, dur: DURATION_MS, ps, orbs: [], next: 600, nid: 1, eid: 0, gold: 0, ev: [], rs: 0, imp: [], iid: 0 };
   for (let i = 0; i < C.START_ORBS; i++) spawnOrb(mg, r);
   mg.rs = r.state();
   return mg;
@@ -61,6 +65,37 @@ function spawnOrb(mg, rng) {
   if (gold) mg.gold++;
 }
 
+/**
+ * One tick of a player's body (pure; the host and the owner's client run the very same math). Timers count down, then, unless `env.passive`:
+ * facing from the stick, bump (dash) start, velocity easing; then knockback decay and dead-reckoned position, clamped to the arena.
+ * `env.passive` = the host stepping an OWNED seat: the owner already did the input-driven part and reported the result, so only timers, decay and dead reckoning run.
+ * `f` is an InputFrame (move + pressed). @returns true when a dash started this tick (the owner increments its serial `dn` then).
+ */
+export function stepBody(p, f, dtMs, env = {}) {
+  const sec = dtMs / 1000;
+  p.dash = Math.max(0, p.dash - dtMs); p.cd = Math.max(0, p.cd - dtMs); p.stun = Math.max(0, p.stun - dtMs);
+  let started = false;
+  if (!env.passive) {
+    let mx = f.move?.x ?? 0, my = f.move?.y ?? 0;
+    const ml = Math.hypot(mx, my);
+    if (ml > 1) { mx /= ml; my /= ml; }
+    const dl = Math.min(ml, 1);
+    if (dl > 0.2 && p.stun === 0) { p.fx = r2(mx / dl); p.fy = r2(my / dl); }
+    if ((f.pressed?.action || f.pressed?.jump) && p.cd === 0 && p.stun === 0 && p.dash === 0) { p.dash = C.DASH_MS; p.cd = C.COOLDOWN_MS; p.dh = []; started = true; }
+    if (p.dash > 0) { p.vx = p.fx * C.DASH_SPEED; p.vy = p.fy * C.DASH_SPEED; }
+    else {
+      const k = Math.min(1, sec * C.ACCEL), ctl = p.stun > 0 ? 0 : 1;
+      p.vx += (mx * C.SPEED * ctl - p.vx) * k;
+      p.vy += (my * C.SPEED * ctl - p.vy) * k;
+    }
+  }
+  const decay = Math.pow(0.5, dtMs / C.KB_HALF_MS);
+  p.kx *= decay; p.ky *= decay;
+  p.x = clamp(p.x + (p.vx + p.kx) * sec, ARENA.x0, ARENA.x1);
+  p.y = clamp(p.y + (p.vy + p.ky) * sec, ARENA.y0, ARENA.y1);
+  return started;
+}
+
 /** Advances the game by dtMs. `inputs`: seat -> InputFrame (missing seat = no input). Mutates and returns mg. */
 export function hostStep(mg, inputs, dtMs) {
   if (mg.done) return mg;
@@ -70,26 +105,10 @@ export function hostStep(mg, inputs, dtMs) {
   let rng = null;
   const R = () => (rng ??= createRng(mg.rs));
 
-  // --- players ---
+  // --- players: an owned seat keeps only timers + dead reckoning (its body comes from hostAdopt), the others follow their input frame ---
   for (const p of mg.ps) {
-    const f = inputs?.[p.s] ?? ZERO;
-    p.dash = Math.max(0, p.dash - dtMs); p.cd = Math.max(0, p.cd - dtMs); p.stun = Math.max(0, p.stun - dtMs); p.binv = Math.max(0, p.binv - dtMs);
-    let mx = f.move?.x ?? 0, my = f.move?.y ?? 0;
-    const ml = Math.hypot(mx, my);
-    if (ml > 1) { mx /= ml; my /= ml; }
-    const dl = Math.min(ml, 1);
-    if (dl > 0.2 && p.stun === 0) { p.fx = r2(mx / dl); p.fy = r2(my / dl); }
-    if ((f.pressed?.action || f.pressed?.jump) && p.cd === 0 && p.stun === 0 && p.dash === 0) { p.dash = C.DASH_MS; p.cd = C.COOLDOWN_MS; p.dh = []; }
-    if (p.dash > 0) { p.vx = p.fx * C.DASH_SPEED; p.vy = p.fy * C.DASH_SPEED; }
-    else {
-      const k = Math.min(1, sec * C.ACCEL), ctl = p.stun > 0 ? 0 : 1;
-      p.vx += (mx * C.SPEED * ctl - p.vx) * k;
-      p.vy += (my * C.SPEED * ctl - p.vy) * k;
-    }
-    const decay = Math.pow(0.5, dtMs / C.KB_HALF_MS);
-    p.kx *= decay; p.ky *= decay;
-    p.x = clamp(p.x + (p.vx + p.kx) * sec, ARENA.x0, ARENA.x1);
-    p.y = clamp(p.y + (p.vy + p.ky) * sec, ARENA.y0, ARENA.y1);
+    p.binv = Math.max(0, p.binv - dtMs);   // bump-proof timer: host-only (the owner's body has no binv)
+    stepBody(p, inputs?.[p.s] ?? ZERO, dtMs, { passive: isOwned(p, mg.t) });
   }
 
   // --- bumps: a dashing player hits every rival it touches (once per dash) and makes them spill aura ---
@@ -102,8 +121,7 @@ export function hostStep(mg, inputs, dtMs) {
       p.dh.push(q.s);
       if (q.binv > 0) { pushEv(mg, { k: 'b', s: p.s, o: q.s, l: 0, x: r1(q.x), y: r1(q.y) }); continue; }
       const nx = d > 0.001 ? dx / d : p.fx, ny = d > 0.001 ? dy / d : p.fy;
-      q.kx += nx * C.BUMP_KB; q.ky += ny * C.BUMP_KB;
-      q.stun = Math.max(q.stun, C.BUMP_STUN_MS);
+      pushImp(mg, q, q.s, { kx: nx * C.BUMP_KB, ky: ny * C.BUMP_KB, st: C.BUMP_STUN_MS });   // the victim's owner applies it locally and acks; the host copy gets the same hit
       q.binv = C.BUMP_INV_MS;
       const lost = spillAmount(q.aura);
       if (lost > 0) {
@@ -121,13 +139,14 @@ export function hostStep(mg, inputs, dtMs) {
     }
   }
 
-  // --- players push each other apart a little ---
+  // --- players push each other apart a little (each takes half; an owned seat does its half itself, client-side, and is not moved here) ---
   for (let i = 0; i < mg.ps.length; i++) for (let j = i + 1; j < mg.ps.length; j++) {
     const a = mg.ps[i], b = mg.ps[j];
     const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
     if (d >= 2 * C.R || d < 0.001) continue;
     const push = (2 * C.R - d) / 2, nx = dx / d, ny = dy / d;
-    a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push;
+    if (!isOwned(a, mg.t)) { a.x -= nx * push; a.y -= ny * push; }
+    if (!isOwned(b, mg.t)) { b.x += nx * push; b.y += ny * push; }
   }
 
   // --- orbs: spilled ones fly out, golden ones expire, new ones spawn ---
@@ -170,6 +189,25 @@ export function hostStep(mg, inputs, dtMs) {
   if (rng) mg.rs = rng.state();
   if (mg.t >= mg.dur) mg.done = true;
   return mg;
+}
+
+// The fields an owner reports. kin = kinematic: ignored until the owner has acked the latest impulse (a report from before a hit must not overwrite the knockback).
+// dn = the dash serial: the owner counts its dashes, a new value tells the host "a fresh dash started" (resets dh so it can hit again).
+const OWNED = {
+  x: { lo: ARENA.x0, hi: ARENA.x1, kin: true }, y: { lo: ARENA.y0, hi: ARENA.y1, kin: true },
+  vx: { lo: -1000, hi: 1000, kin: true }, vy: { lo: -1000, hi: 1000, kin: true },       // dash speed is 850
+  kx: { lo: -2500, hi: 2500, kin: true }, ky: { lo: -2500, hi: 2500, kin: true },       // two stacked bumps are ~2200
+  fx: { lo: -1, hi: 1, dp: 2, kin: true }, fy: { lo: -1, hi: 1, dp: 2, kin: true },
+  dash: { lo: 0, hi: C.DASH_MS, kin: true }, cd: { lo: 0, hi: C.COOLDOWN_MS, kin: true }, stun: { lo: 0, hi: C.BUMP_STUN_MS * 2, kin: true },
+  dn: { lo: 0, hi: 1e6, serial: true },
+};
+
+/** Host: adopt one owner report (runner calls it once per fresh mgOwn report, before the sim batch). Whitelist + clamp only; aura, binv, dh, ia, the orbs are host-owned and never written. */
+export function hostAdopt(mg, seat, report) {
+  const p = mg.ps.find((q) => q.s === seat);
+  const res = adoptFields(p, report, OWNED, mg.t);
+  if (res?.changed.includes('dn')) p.dh = [];   // a new dash: it may hit every rival again
+  return res;
 }
 
 /** Ranking, best first (most aura). Works on any state (also a hard-capped, not-yet-done one). Equal aura ties. */

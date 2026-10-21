@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng, MINIGAMES } from '../../contracts.js';
-import { hostInit, hostStep, hostResult, botFrame, spillAmount, fmtAura, ARENA, C, DURATION_MS } from './sim.js';
+import { hostInit, hostStep, hostResult, hostAdopt, stepBody, botFrame, spillAmount, fmtAura, ARENA, C, DURATION_MS } from './sim.js';
+import { takeImps } from '../owner.js';
+import { TIMING } from '../../contracts.js';
 import LINES from './lines.js';
 
 const DT = 1000 / 60;
@@ -226,4 +228,131 @@ test('lines.js: 4-10 voice lines overall, German, short, no brackets', () => {
 
 test('aura is an arena game in the MINIGAMES table', () => {
   assert.equal(MINIGAMES.aura.kind, 'arena');
+});
+
+// ---- owner-authoritative movement ----
+const report = (p, over = {}) => ({ x: p.x, y: p.y, vx: 0, vy: 0, kx: 0, ky: 0, fx: p.fx, fy: p.fy, dash: 0, cd: 0, stun: 0, dn: p.dn, ack: p.ia, ...over });
+
+test('stepBody is the host body math: a one-seat hostStep equals stepBody ticks (and a started dash is reported)', () => {
+  const mg = quiet(init([0]));
+  const p = pl(mg, 0), c = structuredClone(p);
+  let started = 0;
+  for (let i = 0; i < 40; i++) {
+    const f = i === 5 ? bump({ x: 0.6, y: 0.8 }) : frame({ move: { x: 0.6, y: 0.8 } });
+    hostStep(mg, { 0: f }, DT);
+    started += stepBody(c, f, DT) ? 1 : 0;
+  }
+  assert.equal(started, 1);
+  for (const k of ['vx', 'vy', 'kx', 'ky']) c[k] = Math.round(c[k] * 10) / 10;
+  assert.ok(Math.abs(p.x - c.x) < 0.2 && Math.abs(p.y - c.y) < 0.2, `host ${p.x},${p.y} vs stepBody ${c.x},${c.y}`);
+  assert.equal(p.dash, c.dash);
+});
+
+test('hostAdopt: whitelists fields, clamps to the arena and sane speeds, never touches host-owned fields', () => {
+  const mg = init([0, 1]);
+  const p = pl(mg, 0);
+  Object.assign(p, { aura: 500, binv: 300, ia: 0 });
+  const res = hostAdopt(mg, 0, { x: 99999, y: -5, vx: 5000, vy: -5000, kx: 12.34, ky: 0, fx: 3, fy: -3, dash: 99999, cd: 5, stun: 7, dn: 2, aura: 99999, binv: 0, s: 1, dh: [1], ia: 77, ot: -1, hax: 1, ack: 0 });
+  assert.deepEqual(res, { changed: ['dn'], gated: false });
+  assert.deepEqual([p.x, p.y, p.vx, p.vy, p.kx, p.fx, p.fy], [ARENA.x1, ARENA.y0, 1000, -1000, 12.3, 1, -1]);
+  assert.equal(p.dash, C.DASH_MS);
+  assert.equal(p.dn, 2);
+  assert.deepEqual([p.aura, p.binv, p.s, p.ia, p.dh, 'hax' in p], [500, 300, 0, 0, [], false], 'host-owned fields untouched');
+  assert.equal(p.ot, mg.t);
+});
+
+test('hostAdopt rejects NaN, Infinity and non-numbers field by field', () => {
+  const mg = init([0, 1]);
+  const p = pl(mg, 0), before = { x: p.x, y: p.y, vx: p.vx };
+  hostAdopt(mg, 0, { x: NaN, y: Infinity, vx: '5', vy: null, kx: {}, ky: undefined, fx: [1], dn: NaN, ack: 0 });
+  assert.deepEqual({ x: p.x, y: p.y, vx: p.vx }, before);
+  assert.equal(p.dn, 0);
+  assert.equal(hostAdopt(mg, 0, null), null);
+  assert.equal(hostAdopt(mg, 9, report(p)), null, 'unknown seat');
+});
+
+test('ack gating: while ack < ia the kinematic fields are ignored, the dash serial still counts; once acked they apply', () => {
+  const mg = quiet(init([0, 1]));
+  Object.assign(pl(mg, 0), { x: 600, y: 400, fx: 1, fy: 0 }); Object.assign(pl(mg, 1), { x: 640, y: 400 });
+  hostStep(mg, { 0: bump() }, DT);
+  const v = pl(mg, 1);
+  assert.equal(v.ia, 1);
+  const kx = v.kx, x = v.x;
+  const res = hostAdopt(mg, 1, { ...report(v), x: 300, y: 300, kx: 0, ack: 0, dn: 1 });
+  assert.equal(res.gated, true);
+  assert.deepEqual([v.x, v.kx], [x, kx], 'stale report cannot erase the knockback or the position');
+  assert.equal(v.dn, 1, 'serials are not kinematic');
+  hostAdopt(mg, 1, { ...report(v), x: 300, y: 300, kx: 5, ack: 1 });
+  assert.deepEqual([v.x, v.y, v.kx], [300, 300, 5]);
+});
+
+test('a new dash serial (dn) resets dh so the next dash can hit again; an unchanged one does not', () => {
+  const mg = quiet(init([0, 1]));
+  const p = pl(mg, 0);
+  p.dh = [1];
+  hostAdopt(mg, 0, report(p));
+  assert.deepEqual(p.dh, [1]);
+  hostAdopt(mg, 0, report(p, { dn: 1, dash: 180 }));
+  assert.deepEqual(p.dh, []);
+  // owned dasher hits the rival at the REPORTED position, once per serial
+  Object.assign(pl(mg, 1), { x: 640, y: 400 });
+  hostAdopt(mg, 0, report(p, { x: 610, y: 400, fx: 1, fy: 0, dn: 1, dash: 180 }));
+  hostStep(mg, {}, DT);
+  hostStep(mg, {}, DT);
+  assert.equal(mg.ev.filter((e) => e.k === 'b').length, 1);
+});
+
+test('an owned seat ignores its input frame; once the owner goes stale (OWN_STALE_MS) the input path takes over again', () => {
+  const mg = quiet(init([0, 1]));
+  const p = pl(mg, 0);
+  Object.assign(p, { x: 400, y: 400 });
+  hostAdopt(mg, 0, report(p));
+  for (let i = 0; i < 20; i++) hostStep(mg, { 0: bump({ x: 1, y: 0 }) }, DT);
+  assert.deepEqual([p.x, p.vx, p.dash, p.cd], [400, 0, 0, 0], 'owned: the input is not used');
+  mg.t += TIMING.OWN_STALE_MS + 1;
+  hostStep(mg, { 0: frame({ move: { x: 1, y: 0 } }) }, DT);
+  assert.ok(p.vx > 0 && p.x > 400, 'stale: driven by input again');
+  hostStep(mg, { 0: bump() }, DT);
+  assert.ok(p.dash > 0, 'stale: dash start by input works');
+});
+
+test('a bump gives the same knockback for an owned and an unowned victim, and equals the old in-place write', () => {
+  const run = (owned) => {
+    const mg = quiet(init([0, 1]));
+    Object.assign(pl(mg, 0), { x: 600, y: 400, fx: 1, fy: 0 }); Object.assign(pl(mg, 1), { x: 640, y: 400, aura: 1000 });
+    if (owned) hostAdopt(mg, 1, report(pl(mg, 1)));
+    hostStep(mg, { 0: bump() }, DT);
+    const v = pl(mg, 1);
+    return { kx: v.kx, ky: v.ky, stun: v.stun, aura: v.aura, binv: v.binv };
+  };
+  const a = run(false), b = run(true);
+  assert.deepEqual(a, b);
+  assert.ok(a.kx > 1000 && a.stun > 300 && a.aura === 700);
+});
+
+test('pushImp entry shape from a bump: {i, s, kx, ky, st, dc, t}, victim ia = i, nothing for the bumper', () => {
+  const mg = quiet(init([0, 1]));
+  Object.assign(pl(mg, 0), { x: 600, y: 400, fx: 1, fy: 0 }); Object.assign(pl(mg, 1), { x: 640, y: 400 });
+  hostStep(mg, { 0: bump() }, DT);
+  assert.equal(mg.imp.length, 1);
+  const e = mg.imp[0];
+  assert.deepEqual(Object.keys(e).sort(), ['dc', 'i', 'kx', 'ky', 's', 'st', 't']);
+  assert.deepEqual([e.i, e.s, e.st, e.dc], [1, 1, C.BUMP_STUN_MS, 0]);
+  assert.ok(Math.abs(e.kx - C.BUMP_KB) < 1 && Math.abs(e.ky) < 1);
+  assert.equal(mg.iid, 1);
+  assert.equal(pl(mg, 1).ia, 1);
+  assert.equal(pl(mg, 0).ia, 0);
+  // the victim side: takeImps hands it over once; a (re)mounted client replays nothing
+  assert.deepEqual(takeImps(JSON.parse(JSON.stringify(mg)), 1, 0).list.map((x) => x.i), [1]);
+  assert.equal(takeImps(mg, 0, 0).list.length, 0);
+  assert.deepEqual(takeImps(mg, 1, null), { list: [], last: 1 });
+});
+
+test('the soft separation does not move an owned seat; an unowned neighbour still takes its half', () => {
+  const mg = quiet(init([0, 1]));
+  Object.assign(pl(mg, 0), { x: 400, y: 400 }); Object.assign(pl(mg, 1), { x: 420, y: 400 });
+  hostAdopt(mg, 0, report(pl(mg, 0)));
+  hostStep(mg, {}, DT);
+  assert.equal(pl(mg, 0).x, 400);
+  assert.equal(pl(mg, 1).x, 420 + (2 * C.R - 20) / 2);
 });
