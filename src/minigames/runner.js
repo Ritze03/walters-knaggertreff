@@ -7,6 +7,7 @@ import { box, label } from './draw.js';
 import { fitView, soloLayout, spectatorLayout } from './layout.js';
 import { textOpts } from './font.js';
 import { buildIntro, buildResults } from './screens.js';
+import { createBotDevice } from './botdevice.js';
 
 const LINGER_MS = 1200;      // host waits this long after the last final / the arena's `done` before reporting (so everybody sees the finish)
 const STALE_INPUT_MS = 500;  // an arena input older than this counts as "no input" (tab hidden, lag)
@@ -14,6 +15,8 @@ const MAX_SIM_CATCHUP = 8;   // sim steps per frame at most
 const EMPTY_FRAME = { move: { x: 0, y: 0 }, jump: false, action: false, confirm: false, back: false, pressed: { jump: false, action: false, confirm: false, back: false } };
 const BTN = ['jump', 'action', 'confirm', 'back'];
 const TAG_SIZE = 18;     // thumbnail name tag, screen px
+const BOT_LANE = { x: -4000, y: -4000, scale: 1 };   // a host-run bot (test mode) plays on a hidden lane far off screen
+const SILENT = (audio) => new Proxy(audio, { get: (a, key) => (['sfx', 'say', 'music'].includes(key) ? () => {} : a[key]) });   // bots do not make noise
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
 /** untrusted wire frame -> InputFrame */
@@ -82,6 +85,8 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
   const selfSeat = () => (state ? seatIndexOf(state, session.selfPlayerId) : -1);
   const isParticipant = () => !!cur && cur.desc.seats.includes(selfSeat());
   const seatOf = (playerId) => (state ? seatIndexOf(state, playerId) : -1);
+  /** the seat a solo message is about: its sender, or (test mode) the host-run bot seat the host speaks for */
+  const subjectOf = (m, from) => (Number.isInteger(m?.seat) && state?.seats[m.seat]?.hostBot && from === session.hostPlayerId() ? m.seat : seatOf(from));
 
   function report(results) {
     if (!cur || cur.reported) return;
@@ -91,29 +96,34 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
   /** a BROKEN minigame (missing module, hostInit/hostStep/hostResult threw, entering failed): `void` => core pays no coins (contracts MinigameResults.void) */
   const tieAll = () => ({ placements: [cur.desc.seats.slice()], void: true });
 
+  /** a solo seat is done (its own mgFinal, or the host speaking for a bot) */
+  function acceptFinal(seat, m) {
+    if (!cur || cur.kind !== 'solo') return;
+    if (!cur.desc.seats.includes(seat) || cur.finals.has(seat)) return;
+    const score = typeof m?.score === 'number' && Number.isFinite(m.score) ? m.score : null;
+    cur.finals.set(seat, { score, label: typeof m?.label === 'string' ? m.label.slice(0, 60) : undefined });
+    cur.onFinal?.(seat);
+  }
+  /** host: the latest input frame of an arena/team seat */
+  function putFrame(seat, f) {
+    if (!cur.desc.seats.includes(seat)) return;
+    const prev = cur.inputs.get(seat);
+    if (prev) for (const b of BTN) f.pressed[b] = f.pressed[b] || prev.pressed[b];   // a tap must survive until the next sim step
+    f.at = performance.now();
+    cur.inputs.set(seat, f);
+  }
+
   // ---------------------------------------------------------------- network handlers (installed once, route into `cur`)
   const offs = [
     session.on(MSG.mgProgress, (m, from) => {
       if (!cur || cur.stage !== 'play' || cur.kind !== 'solo') return;
-      const seat = seatOf(from);
+      const seat = subjectOf(m, from);
       if (seat !== selfSeat()) cur.thumbs.get(seat)?.inst?.update?.(m?.p);
     }),
-    session.on(MSG.mgFinal, (m, from) => {
-      if (!cur || cur.kind !== 'solo') return;
-      const seat = seatOf(from);
-      if (!cur.desc.seats.includes(seat) || cur.finals.has(seat)) return;
-      const score = typeof m?.score === 'number' && Number.isFinite(m.score) ? m.score : null;
-      cur.finals.set(seat, { score, label: typeof m?.label === 'string' ? m.label.slice(0, 60) : undefined });
-      cur.onFinal?.(seat);
-    }),
+    session.on(MSG.mgFinal, (m, from) => acceptFinal(subjectOf(m, from), m)),
     session.on(MSG.mgInput, (m, from) => {
       if (!cur || !session.isHost || cur.kind === 'solo' || !cur.hostState) return;
-      const seat = seatOf(from);
-      if (!cur.desc.seats.includes(seat)) return;
-      const f = cleanFrame(m), prev = cur.inputs.get(seat);
-      if (prev) for (const b of BTN) f.pressed[b] = f.pressed[b] || prev.pressed[b];   // a tap must survive until the next sim step
-      f.at = performance.now();
-      cur.inputs.set(seat, f);
+      putFrame(seatOf(from), cleanFrame(m));
     }),
     session.on(MSG.mgState, (m) => {
       if (!cur || cur.stage !== 'play' || cur.kind === 'solo') return;
@@ -167,19 +177,22 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
 
     // ---- mounting one instance on a positioned, scaled lane root
     let hudSink = null, hudLast = null;   // a module with its own canvas mirrors the countdown (ctx.mirrorHud), the Kaplay one would sit below its canvas
-    function mountLane(rect, view, seat) {
+    // `bot` = a host-run test-mode bot { seat, dev }: the same instance a client would mount, on a hidden lane, fed by a device-less input
+    function mountLane(rect, view, seat, bot = null) {
       const stage = scene;   // the scene this lane belongs to (ctx.alive / ctx.onEnd)
       // the lane is clipped to its logical rect (a thumbnail must not paint over its neighbours)
       const lane = scene.obj.add([k.pos(rect.x, rect.y), k.scale(rect.scale), k.rect(logical.w, logical.h), k.mask('intersect')]);
+      if (bot) lane.hidden = true;
       const ctx = {
-        k, root: lane, view, seat, selfSeat: self, seats: seatObjs, mode: desc.mode, teams: desc.teams, seed: desc.seed, rng: createRng(desc.seed),
-        logical, input, audio, addAvatar: avatarFor(lane), isBot: !!debug.bot, spectator: !participant, durationMs: mod.durationMs,   // the last two are extras beyond contracts section 10
+        k, root: lane, view, seat, selfSeat: bot ? bot.seat : self, seats: seatObjs, mode: desc.mode, teams: desc.teams, seed: desc.seed, rng: createRng(desc.seed),
+        logical, input: bot ? bot.dev : input, audio: bot ? SILENT(audio) : audio, addAvatar: avatarFor(lane), isBot: bot ? true : !!debug.bot,
+        spectator: bot ? false : !participant, durationMs: mod.durationMs,   // the last two are extras beyond contracts section 10
         rect: { x: rect.x, y: rect.y, w: logical.w * rect.scale, h: logical.h * rect.scale },   // the lane on the SCREEN (1280x720), for modules with their own canvas
         alive: () => scene === stage && !destroyed,                                             // false once this stage was torn down
         onEnd: (fn) => { if (scene === stage) stage.cleanups.push(fn); else { try { fn(); } catch (e) { warn('onEnd failed', e); } } },   // runs when the stage ends (before instance.destroy)
-        mirrorHud: view === 'main' ? (fn) => { hudSink = fn; hudLast = null; } : noop,         // fn({ countdown:{text,color,opacity,scale}|null, caption:string }), called on change
-        sendProgress: view === 'main' && solo && participant ? (p) => { pendingP = p; } : noop,
-        finish: view === 'main' && solo && participant ? finishSelf : noop,
+        mirrorHud: view === 'main' && !bot ? (fn) => { hudSink = fn; hudLast = null; } : noop,         // fn({ countdown:{text,color,opacity,scale}|null, caption:string }), called on change
+        sendProgress: bot ? (p) => { bot.pending = p; } : view === 'main' && solo && participant ? (p) => { pendingP = p; } : noop,
+        finish: bot ? (r) => botFinish(bot, r) : view === 'main' && solo && participant ? finishSelf : noop,
       };
       let inst = null;
       try { inst = mod.clientMount(ctx); } catch (e) {
@@ -237,6 +250,43 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
       });
     } else {
       cur.main = mountLane({ x: 0, y: 0, scale: 1 }, 'main', participant ? self : desc.seats[0]);
+    }
+    // ---- test mode: the host plays its bot seats with the very same client instance a ?bot tab would run (hidden lane, device-less input)
+    const bots = [];
+    if (host && state.settings?.testMode) {
+      for (const s of desc.seats) {
+        if (!state.seats[s]?.hostBot) continue;
+        const bot = { seat: s, dev: createBotDevice(), inst: null, pending: undefined, lastSend: 0, lastInput: 0, finished: false };
+        bot.inst = mountLane(BOT_LANE, 'main', s, bot).inst;
+        bots.push(bot);
+      }
+    }
+    function flushBot(bot) {
+      if (bot.pending === undefined) return;
+      const p = bot.pending;
+      bot.pending = undefined; bot.lastSend = performance.now();
+      cur.thumbs.get(bot.seat)?.inst?.update?.(p);
+      session.broadcast(MSG.mgProgress, { t: Math.round(bot.lastSend - goWall), p, seat: bot.seat });
+    }
+    function botFinish(bot, r) {
+      if (bot.finished || !went) return;
+      bot.finished = true;
+      flushBot(bot);
+      const m = { score: typeof r?.score === 'number' && Number.isFinite(r.score) ? Math.round(r.score * 1000) / 1000 : null, ...(r?.label ? { label: String(r.label).slice(0, 60) } : {}) };
+      acceptFinal(bot.seat, m);
+      session.broadcast(MSG.mgFinal, { ...m, seat: bot.seat });
+    }
+    /** per frame: the bot's wish -> its input device; solo bots stream progress at 10 Hz, arena bots feed the host sim at 30 Hz */
+    function driveBots(now) {
+      for (const bot of bots) {
+        if (!bot.inst) continue;
+        let inj = null;
+        if (went && !bot.finished) { try { inj = bot.inst.botInput?.() ?? null; } catch (e) { warn('botInput threw', e); } }
+        bot.dev.inject(inj);
+        bot.dev.update();
+        if (solo) { if (went && now - bot.lastSend >= 1000 / TIMING.SOLO_PROGRESS_HZ) flushBot(bot); }
+        else if (went && now - bot.lastInput >= 1000 / TIMING.CLIENT_INPUT_HZ) { bot.lastInput = now; putFrame(bot.seat, cleanFrame(bot.dev.takeFrame())); }
+      }
     }
     cur.onFinal = (seat) => {
       const f = cur.finals.get(seat);
@@ -303,7 +353,13 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
         cur.hostState = mod.hostInit({ seats: desc.seats.slice(), seed: desc.seed, rng: createRng(desc.seed), mode: desc.mode, teams: desc.teams });
       } catch (e) { warn(`${desc.id}.hostInit threw`, e); cur.hostState = { t: 0, done: true, broken: true }; }
     }
-    const broadcastState = () => session.broadcast(MSG.mgState, { t: cur.hostState.t, s: cur.hostState }, { self: true });
+    const broadcastState = () => {
+      session.broadcast(MSG.mgState, { t: cur.hostState.t, s: cur.hostState }, { self: true });
+      if (bots.length) {
+        const snap = structuredClone(cur.hostState);
+        for (const bot of bots) { try { bot.inst?.update?.(snap); } catch (e) { warn('bot update threw', e); } }
+      }
+    };
     function arenaEnd() {
       if (ending || cur.reported) return;
       ending = true;
@@ -343,6 +399,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
           if (fresh) { showCd('LOS!', '#8ce99a'); audio.sfx('go'); }
           input.takeFrame();   // drop taps latched during the countdown
           try { cur.main?.inst?.go?.(); } catch (e) { warn('go() threw', e); }
+          for (const bot of bots) { try { bot.inst?.go?.(); } catch (e) { warn('bot go() threw', e); } }
         }
       }
       pushHud();
@@ -352,6 +409,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
         if (went) { try { inj = cur.main.inst.botInput?.() ?? null; } catch (e) { warn('botInput threw', e); } }
         input.inject(inj);
       }
+      driveBots(now);
       // solo: stream my progress at 10 Hz
       if (solo && participant && went && pendingP !== undefined && now - lastSend >= 1000 / TIMING.SOLO_PROGRESS_HZ) flushProgress();
       // arena: stream my input at 30 Hz

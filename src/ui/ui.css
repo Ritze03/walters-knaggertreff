@@ -178,3 +178,15 @@ input[readonly] { opacity: .8; }
 .pad-dpad::before, .pad-dpad::after { content: ''; position: absolute; inset: 0; margin: auto; border-radius: 0.06em; background: #fff; }
 .pad-dpad::before { width: 62%; height: 21%; }
 .pad-dpad::after { width: 21%; height: 62%; }
+
+/* Testmodus (lobby): a picker of every minigame, three per row, plus the bot controls */
+.testmode { display: flex; flex-direction: column; gap: 0.375rem; }
+.tm-bots { align-items: center; flex-wrap: wrap; gap: 0.375rem; }
+.tm-bots button { padding: 0.25rem 0.625rem; }
+.tm-count { flex: 1 0 100%; font-size: .85rem; opacity: .9; font-weight: 600; }
+.tm-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.tm-games { flex-wrap: nowrap; gap: 0.3125rem; }
+.tm-games .tile { flex: 0 0 calc((100% - 0.625rem) / 3); padding: 0.1875rem 0.5rem; font-size: .8rem; overflow: hidden; }
+.tm-games .tile b, .tm-games .tile small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm-games .tile small { font-size: .68rem; }
+.tm-games .tile.off { opacity: .55; }

@@ -34,6 +34,7 @@ const ERR_TEXT = {
   [ERR.full]: 'Die Lobby ist voll.',
   [ERR.started]: 'Das Spiel läuft schon, ohne dich.',
   [ERR.protocol]: 'Falsche Version. Lade die Seite neu.',
+  [ERR.playerCount]: 'Dafür passt die Spielerzahl nicht.',
 };
 const errText = (code) => ERR_TEXT[code] ?? 'Das ging schief.';
 const FATAL_REJECTS = new Set([ERR.full, ERR.started, ERR.protocol]);
@@ -245,7 +246,10 @@ function startRun({ gameId, profile, isHost, initial = null }) {
 
     if (phase === PHASE.lobby) {
       if (ui.panelKind() !== 'lobby') {
-        ui.showLobby({ state, selfSeat, isHost, inviteLink, boards: BOARDS, send: sendIntent, onLeave: () => leave() });
+        const avail = state.settings.availableMinigames;
+        const minigames = listMinigames().filter((m) => !avail || avail.includes(m.id)).map((m) => ({ id: m.id, name: m.name }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+        ui.showLobby({ state, selfSeat, isHost, inviteLink, boards: BOARDS, minigames, send: sendIntent, onLeave: () => leave() });
       } else ui.updateLobby(state);
     } else if (phase === PHASE.victory) {
       if (ui.panelKind() !== 'victory' && !victoryTimer) {

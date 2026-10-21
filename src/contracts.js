@@ -252,7 +252,7 @@ export const KEYS = freeze({
 /** @typedef {'solo'|'arena'|'team'} MinigameKind */
 /** @typedef {'ffa'|'duel'|'team'} Mode */
 
-/** @typedef {{ index:number, playerId:string, profile:PlayerProfile, connected:boolean, isHost:boolean, isBot:boolean, ready?:boolean }} Seat
+/** @typedef {{ index:number, playerId:string, profile:PlayerProfile, connected:boolean, isHost:boolean, isBot:boolean, ready?:boolean, hostBot?:boolean }} Seat
  *  ready = lobby "Bereit" flag (intent setReady). Only meaningful in 'lobby' for non-host seats: a new seat joins ready:false, rematch resets everyone to false,
  *  the host seat never sets it (the host "readies" by pressing Start). Absent (old saves) = false, so readers use `!!seat.ready`; STATE_VERSION unchanged.
  *  index === position in state.seats. Seat 0 is the host. isBot is informational (tab runs ?bot, self-reported in `hello`).
@@ -295,7 +295,7 @@ export const KEYS = freeze({
  *   rev:number,                                // monotonically increasing, see above
  *   seed:number, rng:number,                   // initial seed (informational) / CURRENT Rng.state() -- core re-creates createRng(state.rng) per call and writes it back
  *   phase:Phase,
- *   settings:{ starTarget:number, boardId:BoardId, forceMinigame:(string|null), availableMinigames:(string[]|null) },
+ *   settings:{ starTarget:number, boardId:BoardId, forceMinigame:(string|null), availableMinigames:(string[]|null), testMode?:boolean, testLast?:(string|null) },
  *       // forceMinigame = ?mg (host's URL). availableMinigames = ids of minigame modules that actually exist (main.js passes listMinigames() ids);
  *       // null = every MINIGAMES id. Set once by createGame, kept by rematch/serialize. Saves without the field behave like null.
  *   rules:Rules,
@@ -349,8 +349,9 @@ export const KEYS = freeze({
 // ===== 6. Intents, events, core API  [core (implements), board/ui/main (call)] =====
 
 export const INTENT = en('setProfile', 'setSettings', 'startGame', 'rematch', 'roll', 'useItem', 'choosePath', 'buyStar', 'buyItem', 'ready', 'setReady',
+  'setTestMode', 'addBot', 'removeBot', 'testMinigame',
   'seatJoin', 'seatPresence', 'advance', 'minigameDone');
-export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'invalid', 'tooFewPlayers', 'notReady', 'cantAfford', 'itemsFull', 'full', 'started', 'protocol');
+export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'invalid', 'tooFewPlayers', 'notReady', 'cantAfford', 'itemsFull', 'full', 'started', 'protocol', 'playerCount');
 
 /** Player intents travel client -> host as MSG.intent. The host NEVER trusts a seat in the payload: it maps `from` playerId -> seat.
  *  WHO / WHEN:
@@ -366,9 +367,17 @@ export const ERR = en('forbidden', 'wrongPhase', 'notYourTurn', 'wrongStep', 'in
  *   buyStar     turn.seat only, step 'star':  accept=false declines (movement continues)
  *   buyItem     turn.seat only, step 'shop':  item=null leaves without buying
  *   ready       any participant seat, minigameIntro (idempotent). minigame input is NOT an intent (see MSG.mgInput).
+ *  TEST MODE (lobby only, host seat only; never touches stars/coins; see core/engine.js):
+ *   setTestMode {on:boolean}   settings.testMode. Off removes every host-run bot seat. While on, startGame is refused (invalid).
+ *   addBot      {count?:1..}   testMode only: adds host-run bot seats (seat.hostBot = isBot = ready = true, playerId 'bot-...'), clamped to MAX_PLAYERS (full when none fits)
+ *   removeBot   {seat}         testMode only: removes a hostBot seat (invalid for any other seat)
+ *   testMinigame {id}          testMode only: starts minigame `id` with ALL connected seats (>= MIN_PLAYERS, else tooFewPlayers; count outside min..max or an odd team count -> playerCount;
+ *                              id outside settings.availableMinigames -> invalid) -> minigameIntro (hostBot seats pre-ready). minigameDone then pays nothing (no coins, no mgWins, no log);
+ *                              `advance` after the results returns to phase 'lobby' (the picker), disconnected seats dropped. settings.testLast = last started id.
  *  @typedef {(
  *   { type:'setProfile', profile:Partial<PlayerProfile> }
  * | { type:'setSettings', starTarget?:number, boardId?:BoardId }
+ * | { type:'setTestMode', on:boolean } | { type:'addBot', count?:number } | { type:'removeBot', seat:number } | { type:'testMinigame', id:string }
  * | { type:'startGame' } | { type:'rematch' }
  * | { type:'roll' }
  * | { type:'useItem', item:ItemId, targetSeat?:number, spaceId?:string }
