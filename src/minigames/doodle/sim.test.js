@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng } from '../../contracts.js';
-import { W, C, STEP, DURATION_MS, makeCourse, newState, launch, step, newBot, botControl, heightM, fmtM, wrapDelta } from './sim.js';
+import { W, H, C, STEP, DURATION_MS, makeCourse, newState, launch, step, newBot, botControl, heightM, fmtM, wrapDelta, platX } from './sim.js';
 import LINES from './lines.js';
 
 function play(seed, botSeed = seed, noise) {
@@ -90,5 +90,88 @@ test('lines.js: pure data, German, short', () => {
   for (const [key, arr] of Object.entries(LINES)) {
     assert.ok(Array.isArray(arr) && arr.length > 0, key);
     for (const s of arr) { assert.equal(typeof s, 'string'); assert.ok(s.length <= 60, s); assert.ok(!/[\[\]]/.test(s), s); }
+  }
+});
+
+// ---- softlock: a breaking platform must never take progress away
+const JUMP = (C.V_BOUNCE ** 2) / (2 * C.G);
+
+test('landing on a breaking platform always bounces up (a bit stronger), then it breaks', () => {
+  let tested = 0;
+  for (let seed = 1; seed <= 40; seed++) {
+    for (let which = 0; which < 3; which++) {
+      const course = makeCourse(createRng(seed));   // a fresh course each time: the follow-up bounces must not break the other ones
+      course.ensure(-4000);
+      const p = course.plats.filter((q) => q.type === 'crumble')[which];
+      if (!p) continue;
+      course.items.length = 0;   // no Club-Mate / gull / drone next to it: this is about the platform only
+      course.gulls.length = 0; course.drones.length = 0;
+      const st = newState(course);
+      st.started = true; st.t = 5; st.x = platX(p, st.t); st.y = p.y - 3; st.vy = 300; st.camY = p.y - 400; st.maxH = -p.y;
+      step(st, course, 0);
+      assert.equal(st.vy, -C.V_CRUMBLE, 'normal-or-better bounce, no fall-through');
+      assert.ok(C.V_CRUMBLE >= C.V_BOUNCE);
+      assert.ok(st.ev.includes('crumble'));
+      assert.ok(p.broke >= 0, 'it breaks AFTER the bounce');
+      let top = st.y;
+      for (let i = 0; i < 60; i++) { step(st, course, 0); top = Math.min(top, st.y); }
+      assert.ok(top < p.y - JUMP + 5, `moved up (apex ${top} vs platform ${p.y})`);
+      tested++;
+    }
+  }
+  assert.ok(tested >= 40, `${tested} crumble landings tested`);
+});
+
+test('course: the non-breaking platforms always form a chain of normal jumps; every breaking one has a normal platform within jump height above it', () => {
+  let crumbles = 0;
+  for (let seed = 1; seed <= 200; seed++) {
+    const c = makeCourse(createRng(seed));
+    c.ensure(-9000);
+    const solids = c.plats.filter((p) => p.type !== 'crumble');
+    for (let i = 1; i < solids.length; i++) {
+      assert.ok(solids[i - 1].y - solids[i].y < JUMP - 20, `seed ${seed}: solid gap ${solids[i - 1].y - solids[i].y}`);
+      assert.ok(Math.abs(wrapDelta(solids[i - 1].x, solids[i].x)) <= 245, `seed ${seed}: solid dx`);
+    }
+    for (let i = 1; i < c.plats.length; i++) assert.ok(c.plats[i - 1].y > c.plats[i].y, 'sorted by y (the client culls by binary search)');
+    c.plats.forEach((p, i) => {
+      if (p.type !== 'crumble') return;
+      crumbles++;
+      const above = c.plats.slice(i + 1).find((q) => q.type !== 'crumble');
+      assert.ok(above, `seed ${seed}: a normal platform follows`);
+      assert.ok(p.y - above.y < JUMP - 20, `seed ${seed}: reachable from the breaking one`);
+      assert.ok(Math.abs(wrapDelta(p.x, above.x)) <= 245, `seed ${seed}: reachable sideways`);
+    });
+  }
+  assert.ok(crumbles > 300, `${crumbles} breaking platforms in 200 seeds`);
+});
+
+test('safety net: below the screen with nothing to land on -> respawn on a normal platform, short invulnerable flash, no score loss', () => {
+  const course = makeCourse(createRng(4));
+  course.ensure(-3000);
+  const st = newState(course);
+  launch(st);
+  st.y = -1500; st.camY = -1800; st.maxH = 1500; st.t = 9; st.vy = 600;
+  for (const p of course.plats) if (p.type === 'crumble') p.broke = 1;   // every Pappe has broken
+  st.y = st.camY + H + C.FALL_MARGIN + 30;                            // fell out of the screen
+  step(st, course, 0);
+  assert.equal(st.falls, 1);
+  assert.ok(st.ev.includes('fall'));
+  assert.ok(st.inv > 1, 'invulnerable flash');
+  assert.ok(st.vy < 0, 'bounces right away');
+  assert.equal(st.maxH, 1500, 'score untouched');
+  assert.ok(course.plats.every((p) => p.type !== 'crumble' || p.broke < 0), 'broken Pappe is whole again');
+  assert.ok(course.plats.some((p) => p.type !== 'crumble' && Math.abs(p.y - st.y) < 1e-6), 'stands on a normal platform');
+  assert.ok(-st.y <= st.maxH - C.PENALTY_PX + 1);
+});
+
+test('nobody is ever stuck: even with every breaking platform already gone, a perfect bot keeps climbing', () => {
+  for (let seed = 1; seed <= 12; seed++) {
+    const course = makeCourse(createRng(seed));
+    course.ensure(-9000);
+    for (const p of course.plats) if (p.type === 'crumble') p.broke = 0;   // all gone as soon as t > CRUMBLE_S
+    const st = newState(course), bot = newBot(createRng(seed));
+    launch(st);
+    for (let i = 0; i < 60 * 20; i++) { step(st, course, botControl(st, course, bot, 0)); st.ev.length = 0; }
+    assert.ok(heightM(st) > 150, `seed ${seed}: ${heightM(st)} m`);
   }
 });
