@@ -1,4 +1,4 @@
-// Offline German voice-line generator. Renders every variant in src/audio/lines.js with Piper (de_DE-thorsten-high),
+// Offline German voice-line generator. Renders every variant in src/audio/lines.js and every src/minigames/*/lines.js (ids mg-<game>-<key>-<n>) with Piper (de_DE-thorsten-high),
 // applies a seeded comedic pitch/speed wobble, loudness-normalises and encodes mono Opus in Ogg into public/voice/.
 // Usage: node tools/voice/generate.mjs --python <venv>/bin/python --model <de_DE-thorsten-high.onnx> [--force] [--only id,id]
 // (or env VOICE_PYTHON / VOICE_MODEL / VOICE_ONLY). Needs ffmpeg (libopus, rubberband, loudnorm) on PATH. See tools/voice/README.md.
@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LINES } from '../../src/audio/lines.js';
+import { collectLines } from './collect.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const outDir = join(root, 'public', 'voice');
@@ -47,7 +47,7 @@ function render(text, file, tmp) {
   const lerp = ([a, b]) => a + rand() * (b - a);
   const length = lerp(WOBBLE.length), pitch = lerp(WOBBLE.pitch);
   const wav = join(tmp, 'raw.wav');
-  run(python, ['-I', '-m', 'piper', '-m', model, '--length-scale', length.toFixed(3), '-f', wav], text);
+  run(python, ['-I', '-m', 'piper', '-m', model, '--length-scale', length.toFixed(3), '-f', wav], text.replaceAll('…', '...'));
   const pre = `${trim},rubberband=pitch=${pitch.toFixed(3)}:formant=preserved,aresample=48000`;
   const ln = `loudnorm=I=${TARGET_LUFS}:TP=-2:LRA=7`;
   // two-pass loudnorm (single pass is unreliable on 1-3 s clips): measure, then apply linearly
@@ -67,19 +67,17 @@ const tmp = mkdtempSync(join(tmpdir(), 'wk-voice-'));
 const manifest = {};
 let rendered = 0;
 try {
-  for (const [id, v] of Object.entries(LINES)) {
-    [].concat(v).forEach((text, n) => {
-      if (manifest[text]) return;   // same text under two ids: one clip
-      const rel = `voice/${id}-${n}.ogg`;
-      const file = join(root, 'public', rel);
-      const skip = !force && old[text] === rel && existsSync(file) && !(only && only.includes(id));
-      if (!skip) {
-        const w = render(text, file, tmp);
-        rendered++;
-        console.log(`${rel}  length_scale ${w.length.toFixed(2)} pitch ${w.pitch.toFixed(2)}  "${text}"`);
-      }
-      manifest[text] = rel;
-    });
+  for (const { id, n, text } of await collectLines()) {
+    if (manifest[text]) continue;   // same text under two ids (core or minigame): one clip, first occurrence wins (core before minigames)
+    const rel = `voice/${id}-${n}.ogg`;
+    const file = join(root, 'public', rel);
+    const skip = !force && old[text] === rel && existsSync(file) && !(only && only.includes(id));
+    if (!skip) {
+      const w = render(text, file, tmp);
+      rendered++;
+      console.log(`${rel}  length_scale ${w.length.toFixed(2)} pitch ${w.pitch.toFixed(2)}  "${text}"`);
+    }
+    manifest[text] = rel;
   }
 } finally { rmSync(tmp, { recursive: true, force: true }); }
 

@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { collectLines, ROOT } from '../../tools/voice/collect.mjs';
 import { LINE_IDS, FIXED_LINES, SFX, MUSIC } from '../contracts.js';
 import { LINES, pickLine } from './lines.js';
 import { SFX_PARAMS, ZZFX_PARAMS } from './sfx.js';
@@ -13,6 +16,44 @@ test('every required line id has non-empty German text', () => {
     assert.ok(v.length >= 1, id);
     for (const s of v) assert.ok(typeof s === 'string' && s.trim().length > 0, id);
   }
+});
+
+// --- pre-rendered voice clips (public/voice, tools/voice/README.md) ---
+const publicDir = join(ROOT, 'public');
+const manifest = JSON.parse(readFileSync(join(publicDir, 'voice', 'manifest.json'), 'utf8'));
+
+test('every core and minigame voice line has a rendered clip', async () => {
+  const lines = await collectLines();   // throws if a minigames/*/lines.js is not an object of non-empty string arrays
+  assert.ok(lines.some((l) => l.id.startsWith('mg-')), 'no minigame lines found');
+  for (const { text, source } of lines) {
+    const rel = manifest[text];
+    assert.ok(rel, `no clip in public/voice/manifest.json for "${text}" (${source}); run tools/voice/generate.mjs`);
+    assert.ok(existsSync(join(publicDir, rel)), `${rel} missing for "${text}" (${source})`);
+  }
+});
+
+test('every manifest entry is a used text with an existing file, and no orphan clips', async () => {
+  const texts = new Set((await collectLines()).map((l) => l.text));
+  for (const [text, rel] of Object.entries(manifest)) {
+    assert.ok(texts.has(text), `manifest has stale text "${text}"`);
+    assert.ok(existsSync(join(publicDir, rel)), rel);
+  }
+  const files = new Set(Object.values(manifest).map((f) => f.slice('voice/'.length)));
+  for (const f of readdirSync(join(publicDir, 'voice')).filter((f) => f.endsWith('.ogg'))) assert.ok(files.has(f), `orphan clip ${f}`);
+});
+
+test('no browser text-to-speech anywhere in src (D22)', () => {
+  const needle = 'speech' + 'synthesis';   // split so this file does not match itself
+  const hits = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(m?js|html|css|json)$/.test(e.name) && readFileSync(p, 'utf8').toLowerCase().includes(needle)) hits.push(p);
+    }
+  };
+  walk(join(ROOT, 'src'));
+  assert.deepEqual(hits, []);
 });
 
 test('fixed lines are verbatim', () => {

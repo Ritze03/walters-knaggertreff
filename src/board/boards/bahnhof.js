@@ -110,19 +110,19 @@ export default {
 
     verspaetung: ({ seat, rng }) => {
       const r = rng.next();
-      if (r < 0.45) return { banner: 'Ihr Zug hat 40 Minuten Verspätung. Fahrgastrechte: +4 Münzen!', sfx: 'coinGain', effects: [coins(seat, 4)] };
-      if (r < 0.8) return { banner: 'Störung im Betriebsablauf! Kaffee to go am Bahnhof: -3 Münzen.', lineId: 'coinsLost', sfx: 'coinLoss', effects: [coins(seat, -3)] };
-      return { banner: 'Weichenstörung! Du verpasst den Anschluss und wartest eine Runde.', lineId: 'sybau', sfx: 'bahnDing', effects: [{ type: 'skipTurns', seat, count: 1 }] };
+      if (r < 0.45) return { banner: 'Ihr Zug hat 40 Minuten Verspätung. Fahrgastrechte: +4 Münzen!', lineId: 'verspaetung', sfx: 'coinGain', effects: [coins(seat, 4)] };
+      if (r < 0.8) return { banner: 'Störung im Betriebsablauf! Kaffee to go am Bahnhof: -3 Münzen.', lineId: 'verspaetung', sfx: 'coinLoss', effects: [coins(seat, -3)] };
+      return { banner: 'Weichenstörung! Du verpasst den Anschluss und wartest eine Runde.', lineId: 'weichenstoerung', sfx: 'bahnDing', effects: [{ type: 'skipTurns', seat, count: 1 }] };
     },
 
     kontrolle: ({ state, seat }) => (state.players[seat].coins > 0
-      ? { banner: 'Fahrkartenkontrolle! Das Handy-Ticket hat 1 % Akku: 5 Münzen Bußgeld.', lineId: 'coinsLost', sfx: 'coinLoss', effects: [coins(seat, -5)] }
+      ? { banner: 'Fahrkartenkontrolle! Das Handy-Ticket hat 1 % Akku: 5 Münzen Bußgeld.', lineId: 'fahrkartenkontrolle', sfx: 'coinLoss', effects: [coins(seat, -5)] }
       : { banner: 'Fahrkartenkontrolle! Bei dir ist nichts zu holen, nicht mal ein Ticket.', sfx: 'bump', effects: [] }),
 
     fundbuero: ({ state, seat, rng }) => {
       if (full(state, seat)) return { banner: 'Fundbüro: Du kannst nichts mehr tragen. Finderlohn +2 Münzen!', sfx: 'coinGain', effects: [coins(seat, 2)] };
       const item = rng.pick(itemIds);
-      return { banner: `Fundbüro! Jemand hat ${ITEM_INFO[item].name} liegen lassen. Jetzt gehört es dir.`, lineId: 'itemGot', sfx: 'item', effects: [{ type: 'giveItem', seat, item }] };
+      return { banner: `Fundbüro! Jemand hat ${ITEM_INFO[item].name} liegen lassen. Jetzt gehört es dir.`, lineId: 'fundbuero', sfx: 'item', effects: [{ type: 'giveItem', seat, item }] };
     },
 
     // Der Zug fährt von Gleis 13 ab, nein, Gleis 7: du tauschst den Platz mit einem zufälligen Mitspieler.
@@ -133,7 +133,7 @@ export default {
       const other = rng.pick(others);
       return {
         banner: 'Gleiswechsel! Ihr Zug fährt heute von einem ganz anderen Gleis: Platztausch!',
-        lineId: 'dasCrazy',
+        lineId: 'gleiswechsel',
         sfx: 'whoosh',
         effects: [{ type: 'moveTo', seat, spaceId: spaceOfSeat(state, other) }, { type: 'moveTo', seat: other, spaceId: here }],
       };
