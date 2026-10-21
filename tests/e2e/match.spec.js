@@ -1,13 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { createMatch, events, state } from './helpers.js';
 
-// Seed 8 with a 40-coin start purse (?coins, a test knob): the purse keeps bot decisions independent of minigame results, so the seed
-// replays the same board whatever the minigame outcomes are. Verified in a core simulation (200 random minigame outcomes) to always
-// contain Forza + Ordnungsamt rounds, a duel and a shop purchase before the 2nd star is bought (3 rounds). Re-verified (60/60 outcomes) after the
-// Mario-numbers rebalance (star 20, duel cap 1 per round, round-2 duel rule).
-// Bot randomness is derived from state.rev, and the bots' lobby `setReady` intents shift the rev, so the seed was re-picked (7 -> 8) with the same
-// simulation including the ready steps (seed 8: 100/100 outcomes; seed 7 now 0/100).
-const QUERY = 'stars=2&seed=8&coins=40';
+// Pool pinned to forza,ordnungsamt (?pool, a debug param) so the spec stays robust whenever new minigames join the registry: the assertions
+// below need exactly those two games, a Forza duel and a shop purchase within a few rounds (with the full pool, seed 8 drew onlyup/pfand/
+// flappytaube/... and the match ran 800 s+ without a 2nd star). Seed 14 + a 40-coin start purse (?coins, a test knob: the purse keeps bot
+// decisions independent of minigame results, so the seed replays the same board whatever the outcomes are). Verified in a core simulation
+// (tools/sim-style: real engine, pool forza+ordnungsamt, random minigame outcomes, 3 bots incl. the lobby setReady steps; 40/40 outcomes
+// contain forza+ordnungsamt rounds, a forza duel and an itemBought, victory in exactly 5 rounds) and in the real run (~4 min).
+// Bot randomness is derived from state.rev, so after an engine change (board, events, intents) the seed must be re-verified; seed 8 (original)
+// still satisfied the assertions with this pool but needed 7 rounds (~9 min), too close to the timeout.
+const QUERY = 'stars=2&seed=14&coins=40&pool=forza,ordnungsamt';
 
 test('3 bots play a full match on Spaeti-Kiez: Forza + Ordnungsamt, a duel, a shop purchase, no errors', async ({ context }) => {
   const m = await createMatch(context, { clients: 2, query: QUERY });
