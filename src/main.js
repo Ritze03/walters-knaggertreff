@@ -40,6 +40,7 @@ const FATAL_REJECTS = new Set([ERR.full, ERR.started, ERR.protocol]);
 const MINIGAME_PHASES = new Set([PHASE.minigameIntro, PHASE.minigame, PHASE.minigameResults]);
 const MUSIC_OF = { lobby: 'lobby', boardTurn: 'board', minigameIntro: 'minigame', minigame: 'minigame', minigameResults: 'minigame', victory: 'victory' };
 const CONNECT_HINT_MS = 12000;
+const RESUME_GRACE_MS = 15000;   // after a host resume, absent seats are not auto-played for this long (D31): time to rejoin first
 const VICTORY_DELAY_MS = 1800;   // lets the board finish the winning animation before the DOM victory panel covers it
 
 // ---- boot ---------------------------------------------------------------------------------------------------------------------
@@ -128,6 +129,7 @@ function startRun({ gameId, profile, isHost, initial = null }) {
   const timers = new Set();
   let stopped = false;
   let hostState = initial;   // host only: THE state
+  const graceUntil = isHost && initial ? performance.now() + RESUME_GRACE_MS : 0;   // resumed run only
   let lastRev = -1;
   let board = null, runner = null;
   let handing = false;   // the board is still playing out its last events + the minigame announcement; the runner mounts afterwards
@@ -301,7 +303,8 @@ function startRun({ gameId, profile, isHost, initial = null }) {
       for (const seat of state.minigame.seats) if (!state.seats[seat].connected && !state.minigame.ready.includes(seat)) absent.push(seat);
     }
     if (absent.length) {
-      autoTimer = later(TIMING.AUTOPLAY_DELAY_MS, () => {
+      // during the resume grace the autoplay is postponed to its end (the timer fires even if no new state arrives; rev check as usual)
+      autoTimer = later(Math.max(TIMING.AUTOPLAY_DELAY_MS, graceUntil - performance.now() + TIMING.AUTOPLAY_DELAY_MS), () => {
         if (hostState.rev !== state.rev) return;
         for (const seat of absent) {
           const intent = core.botIntent(hostState, seat);
