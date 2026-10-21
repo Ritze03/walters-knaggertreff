@@ -79,7 +79,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
     const desc = st.minigame;
     return {
       key: `${st.round}:${desc.id}:${desc.seed}:${desc.purpose}`, desc, mod: getMinigame(desc.id), kind: desc.kind ?? MINIGAMES[desc.id]?.kind ?? 'solo',
-      stage: null, reported: false, finals: new Map(), thumbs: new Map(), main: null, inputs: new Map(), hostState: null,
+      stage: null, reported: false, finals: new Map(), thumbs: new Map(), main: null, inputs: new Map(), own: new Map(), hostState: null,
     };
   }
   const selfSeat = () => (state ? seatIndexOf(state, session.selfPlayerId) : -1);
@@ -124,6 +124,17 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
     session.on(MSG.mgInput, (m, from) => {
       if (!cur || !session.isHost || cur.kind === 'solo' || !cur.hostState) return;
       putFrame(seatOf(from), cleanFrame(m));
+    }),
+    // owner modules: the latest body report of a seat. Seat from `from` only; host-run bots and non-participants are ignored; a seq that is not newer is dropped
+    // (unless the previous report is already stale: a reloaded client starts counting from 1 again)
+    session.on(MSG.mgOwn, (m, from) => {
+      if (!cur || !session.isHost || cur.kind === 'solo' || !cur.hostState || !cur.mod?.hostAdopt) return;
+      const seat = seatOf(from);
+      if (seat < 0 || state.seats[seat]?.hostBot || !cur.desc.seats.includes(seat)) return;
+      if (!Number.isFinite(m?.seq) || !m.s || typeof m.s !== 'object') return;
+      const now = performance.now(), prev = cur.own.get(seat);
+      if (prev && m.seq <= prev.seq && now - prev.at < TIMING.OWN_STALE_MS) return;
+      cur.own.set(seat, { seq: m.seq, s: m.s, at: now, fresh: true });
     }),
     session.on(MSG.mgState, (m) => {
       if (!cur || cur.stage !== 'play' || cur.kind === 'solo') return;
@@ -190,6 +201,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
         rect: { x: rect.x, y: rect.y, w: logical.w * rect.scale, h: logical.h * rect.scale },   // the lane on the SCREEN (1280x720), for modules with their own canvas
         alive: () => scene === stage && !destroyed,                                             // false once this stage was torn down
         onEnd: (fn) => { if (scene === stage) stage.cleanups.push(fn); else { try { fn(); } catch (e) { warn('onEnd failed', e); } } },   // runs when the stage ends (before instance.destroy)
+        owner: !bot && !solo && !!mod.hostAdopt && view === 'main' && participant,   // this client simulates its own body and sends mgOwn (contracts section 10)
         mirrorHud: view === 'main' && !bot ? (fn) => { hudSink = fn; hudLast = null; } : noop,         // fn({ countdown:{text,color,opacity,scale}|null, caption:string }), called on change
         sendProgress: bot ? (p) => { bot.pending = p; } : view === 'main' && solo && participant ? (p) => { pendingP = p; } : noop,
         finish: bot ? (r) => botFinish(bot, r) : view === 'main' && solo && participant ? finishSelf : noop,
@@ -200,7 +212,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
         label(k, lane, 'Hier ist was kaputt gegangen. 🙈', logical.w / 2, logical.h / 2, { size: 40 });
       }
       if (inst) scene.instances.push(inst);
-      return { lane, inst };
+      return { lane, inst, owner: ctx.owner };
     }
     // name tag over a thumbnail: ONE line, "Name  ✓ Ergebnis", the name is shortened with an ellipsis so the tag never grows past its thumbnail
     const tagW = (str) => k.formatText({ text: str, ...textOpts(k, TAG_SIZE) }).width;
@@ -297,6 +309,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
     for (const seat of cur.finals.keys()) cur.onFinal(seat);
     // read-only debug hook for e2e geometry checks: main lane, thumbnail lanes and name tags in screen px
     globalThis.__wkMg = { main: cur.main ? { x: cur.main.lane.pos.x, y: cur.main.lane.pos.y, w: logical.w * cur.main.lane.scale.x, h: logical.h * cur.main.lane.scale.y } : null,
+      own: () => cur.main?.inst?.ownState?.(),   // e2e: this owner client's current body report (what mgOwn carries)
       thumbs: () => [...cur.thumbs].map(([seat, t]) => ({ seat, x: t.lane.pos.x, y: t.lane.pos.y, w: logical.w * t.lane.scale.x, h: logical.h * t.lane.scale.y })),
       tags: () => [...cur.thumbs].map(([seat, t]) => ({ seat, text: t.cap.text, x: t.cap.pos.x - t.cap.width / 2, y: t.cap.pos.y - t.cap.height / 2, w: t.cap.width, h: t.cap.height })) };
 
@@ -372,6 +385,16 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
     function arenaStep(dtMs) {
       const hs = cur.hostState, now = performance.now();
       acc += Math.min(dtMs, 250);
+      // owner modules: apply each connected seat's newest body report ONCE, before the sim batch (hostAdopt stamps p.ot = mg.t, hostStep then skips that seat's input movement)
+      const iid0 = hs.iid;
+      if (mod.hostAdopt) {
+        for (const [seat, r] of cur.own) {
+          if (!r.fresh) continue;
+          r.fresh = false;
+          if (state.seats[seat]?.connected === false || now - r.at >= TIMING.OWN_STALE_MS) continue;
+          try { mod.hostAdopt(hs, seat, r.s); } catch (e) { warn(`${desc.id}.hostAdopt threw`, e); }
+        }
+      }
       for (let i = 0; i < MAX_SIM_CATCHUP && acc >= STEP && !hs.done; i++, acc -= STEP) {
         const inputs = {};
         for (const s of desc.seats) {
@@ -382,6 +405,7 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
         for (const f of cur.inputs.values()) for (const b of BTN) f.pressed[b] = false;   // taps are consumed by one step
       }
       if (acc > STEP * MAX_SIM_CATCHUP) acc = 0;
+      if (hs.iid !== iid0) broadcastState();   // a new impulse (hit on an owner): ship it now, not at the next 20 Hz tick
     }
 
     // ---- the frame loop
@@ -412,10 +436,19 @@ export function createMinigameRunner({ k, session, input, audio, debug = {}, onH
       driveBots(now);
       // solo: stream my progress at 10 Hz
       if (solo && participant && went && pendingP !== undefined && now - lastSend >= 1000 / TIMING.SOLO_PROGRESS_HZ) flushProgress();
-      // arena: stream my input at 30 Hz
-      if (!solo && participant && went && now - lastInputSend >= 1000 / TIMING.CLIENT_INPUT_HZ) {
-        lastInputSend = now;
-        session.sendToHost(MSG.mgInput, { ...input.takeFrame(), seq: ++seq });
+      // arena: stream my input at 30 Hz. An OWNER (ctx.owner, module with hostAdopt) sends its simulated body instead: mgOwn {seq, s: ownState()} at OWN_STATE_HZ.
+      // The host never sees raw input from an owner, so discrete presses (dash, jacket...) must travel as serial counters inside ownState().
+      // takeFrame() is NOT called for owners: the instance reads ctx.input itself (state.move + pressed edges / takeFrame) for its local 60 Hz sim.
+      if (!solo && participant && went) {
+        const owns = cur.main?.owner && typeof cur.main.inst?.ownState === 'function';
+        if (now - lastInputSend >= 1000 / (owns ? TIMING.OWN_STATE_HZ : TIMING.CLIENT_INPUT_HZ)) {
+          lastInputSend = now;
+          if (owns) {
+            let s = null;
+            try { s = cur.main.inst.ownState(); } catch (e) { warn('ownState threw', e); }
+            if (s) session.sendToHost(MSG.mgOwn, { seq: ++seq, s });
+          } else session.sendToHost(MSG.mgInput, { ...input.takeFrame(), seq: ++seq });
+        }
       }
       // arena host: sim + 20 Hz broadcast
       if (host && !solo && cur.hostState && !ending) {

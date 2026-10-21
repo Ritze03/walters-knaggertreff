@@ -11,6 +11,7 @@ export function moduleProblem(mod, folder) {
   if (!Array.isArray(mod.controlHints) || !mod.controlHints.length || mod.controlHints.some((h) => typeof h !== 'string')) return 'controlHints must be a non-empty string[]';
   if (!(mod.durationMs > 0)) return 'durationMs must be > 0';
   if (typeof mod.clientMount !== 'function') return 'clientMount missing';
+  if (mod.hostAdopt !== undefined && typeof mod.hostAdopt !== 'function') return 'hostAdopt must be a function';
   if (MINIGAMES[mod.id].kind !== 'solo' && !(typeof mod.hostInit === 'function' && typeof mod.hostStep === 'function' && typeof mod.hostResult === 'function')) {
     return 'arena/team modules need hostInit, hostStep and hostResult';
   }
