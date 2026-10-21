@@ -319,7 +319,7 @@ const HANDLERS = {
       const got = Math.min(st.rules.stealCoins, st.players[target].coins);
       changeCoins(c, target, -got, 'steal');
       changeCoins(c, actor, got, 'steal');
-      log(c, actor, `${nameOf(c, actor)} klaut ${nameOf(c, target)} ${got} Münzen.`);
+      log(c, actor, `${nameOf(c, actor)} klaut ${nameOf(c, target)} ${got} Flaschen.`);
       return;
     } else if (i.item === ITEM.trap) {
       const sp = typeof i.spaceId === 'string' ? spaceOf(boardOf(c), i.spaceId) : null;
@@ -516,7 +516,7 @@ function checkStars(c, seat) {
     st.endspurt = true;
     if (stars < n) {
       emit(c, { type: 'endspurtStarted' });
-      log(c, null, 'Endspurt! Münzfelder zählen doppelt.');
+      log(c, null, 'Endspurt! Flaschenfelder zählen doppelt.');
     }
   }
   if (stars >= n && st.phase !== 'victory') {
