@@ -1,7 +1,7 @@
 // "Bahnsteig-Chaos" (arena, host-simulated, three.js). Rules: sim.js (pure, tested). Drawing: client.js (three comes in lazily through mount3D).
 import { preload3D } from '../three3d.js';
 import { mountBahnsteig } from './client.js';
-import { DURATION_MS, hostInit, hostStep, hostResult } from './sim.js';
+import { DURATION_MS, hostInit, hostStep, hostResult, hostAdopt } from './sim.js';
 
 export default {
   id: 'bahnsteig',
@@ -14,4 +14,5 @@ export default {
   hostInit,
   hostStep,
   hostResult,
+  hostAdopt,   // owner-authoritative movement: the host adopts each player's reported body (client.js ownState)
 };

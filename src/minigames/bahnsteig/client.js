@@ -1,8 +1,14 @@
-// Bahnsteig-Chaos: client. Draws the latest host snapshots (interpolated) in three.js (loaded lazily through mount3D, never imported here); the rules live in sim.js.
+// Bahnsteig-Chaos: client. Draws the host snapshots in three.js (loaded lazily through mount3D, never imported here); the rules live in sim.js.
+// OWNER PATH (ctx.owner, a human client): my own avatar is simulated HERE (`own`, sim.js stepBody at a fixed 60 Hz from my input, the coyote timer `air` counted against the tiles of
+// the latest snapshot, the ICE gust from the snapshot's ICE extrapolated), so it reacts at once whatever the host's lag; ownState() reports it to the host (mgOwn), which trusts it and sends
+// me back only what it resolves (shoves as impulses, tiles, the ICE, `out`). Remote avatars are drawn from a 100 ms delayed snapshot buffer (interp.js). The local sim lives in the
+// INSTANCE (root.onUpdate), not in the 3D view, so the no-WebGL fallback still plays. NON-OWNER path (ctx.owner false: host-run test bots): the old rendering of the latest snapshot.
 import { createRng } from '../../contracts.js';
+import { fixedStepper, takeImps } from '../owner.js';
+import { createTrack } from '../interp.js';
 import { mount3D } from '../three3d.js';
 import { label, setText, ease } from '../draw.js';
-import { C, GW, GH, T, HALF_W, HALF_H, TRACK_Z, DURATION_MS, tileCenter, botFrame } from './sim.js';
+import { C, GW, GH, T, HALF_W, HALF_H, TRACK_Z, DURATION_MS, tileCenter, botFrame, stepBody, stepAir, gustAt } from './sim.js';
 import lines from './lines.js';
 
 const BED_Y = C.FLOOR_Y;
@@ -16,18 +22,79 @@ export function mountBahnsteig(ctx) {
   const isPlayer = ctx.seats.some((s) => s.index === self);
   const botRng = createRng((ctx.seed ^ Math.imul(self + 1, 0x85EBCA6B)) >>> 0);
 
-  let snap = null, snapAt = 0, time = 0, live = false, view = null;
+  let snap = null, snapAt = 0, snapWall = 0, time = 0, live = false, view = null;
+
+  // ---- owner path state ----
+  const owner = !!ctx.owner && isPlayer;
+  let own = null;                 // my simulated body {x z vx vz kx kz fx fz dash cd stun air dn}; null until the first snapshot seeds it
+  let lastImp = null;             // highest impulse id applied (null = nothing seen yet: the first snapshot only learns the current id); reported as `ack`
+  let tapped = false;             // a shove press waiting for the next 60 Hz step
+  let fallY = 0, fallVy = 0;      // my avatar's visual fall, started locally the moment my own air runs out (the host confirms with `out` later)
+  const stepper = fixedStepper(60);
+  const tracks = new Map();       // seat -> interpolation buffer of that REMOTE player
+  const trackFor = (seat) => { let t = tracks.get(seat); if (!t) tracks.set(seat, t = createTrack({ delayMs: 100, snapDist: 8, keys: ['x', 'z', 'vx', 'vz', 'fx', 'fz'] })); return t; };
+  const r2 = (n) => Math.round(n * 100) / 100;
+
+  /** owner path, per snapshot: seed `own` (first snapshot / remount), apply impulses addressed to me, feed the remote buffers */
+  function takeOwner(s) {
+    const mine = s.ps.find((p) => p.s === self);
+    const got = takeImps(s, self, lastImp);   // null on the first snapshot: nothing is replayed
+    lastImp = got.last;
+    if (!own && mine) own = { x: mine.x, z: mine.z, vx: mine.vx, vz: mine.vz, kx: mine.kx, kz: mine.kz, fx: mine.fx, fz: mine.fz, dash: mine.dash, cd: mine.cd, stun: mine.stun, air: mine.air, dn: mine.dn ?? 0 };
+    if (own) for (const e of got.list) { own.kx += e.kx; own.kz += e.ky; own.stun = Math.max(own.stun, e.st); if (e.dc) own.dash = 0; }   // the impulse's `ky` is the z axis
+    const now = performance.now();
+    for (const p of s.ps) if (p.s !== self) trackFor(p.s).push(now, { x: p.x, z: p.z, vx: p.vx + p.kx, vz: p.vz + p.kz, fx: p.fx, fz: p.fz });   // velocity incl. knockback: what the buffer extrapolates with
+  }
+
+  /** my body, one frame: fixed 60 Hz steps of the SAME body math as the host's (sim.js stepBody) from my stick + latched shove presses; a one-sided half-push against the drawn others stands in
+   *  for the host's soft separation; `air` counts against the tiles of the newest snapshot, so I only fall once I have SEEN the ground vanish under me (+ the coyote time). */
+  function stepOwn(dt) {
+    if (!owner || !own || !live || !snap || snap.done) return;
+    if (snap.ps.find((p) => p.s === self)?.out !== null) return;   // fallen (host-confirmed): the avatar is drawn from the snapshot now
+    const f = ctx.input.takeFrame();
+    tapped ||= f.pressed.action || f.pressed.jump;
+    const frozen = snap.endAt > 0;   // the winner hovers safely during the outro
+    stepper.step(dt * 1000, (ms) => {
+      const g = gustAt(snap.ice, Math.min(0.25, (performance.now() - snapWall) / 1000));
+      if (stepBody(own, { move: f.move, pressed: { action: tapped } }, ms, { gust: g.amt, side: g.side })) { own.dn++; audio.sfx('whoosh', { volume: 0.5, rate: 1.5 }); }
+      tapped = false;
+      const wall = performance.now();
+      for (const q of snap.ps) {
+        if (q.s === self || q.out !== null) continue;
+        const o = tracks.get(q.s)?.sample(wall);
+        if (!o) continue;
+        const dx = own.x - o.x, dz = own.z - o.z, d = Math.hypot(dx, dz);
+        if (d >= 2 * C.R || d < 0.001) continue;
+        const push = (2 * C.R - d) / 2;
+        own.x += (dx / d) * push; own.z += (dz / d) * push;
+      }
+      stepAir(own, snap.tw, ms, frozen);
+      own.air = Math.min(own.air, C.COYOTE_MS);
+    });
+  }
+  if (owner) root.onUpdate(() => stepOwn(k.dt()));
 
   const inst = {
     go() { live = true; view?.onGo(); },
     update(s) {
       if (!s || !Array.isArray(s.ps)) return;
-      snap = s; snapAt = time;
+      snap = s; snapAt = time; snapWall = performance.now();
+      if (owner) takeOwner(s);
       view?.onSnap(s);
+    },
+    /** what the runner sends to the host as mgOwn (30 Hz); null until the first snapshot seeded `own` */
+    ownState() {
+      if (!owner || !own) return null;
+      return {
+        x: r2(own.x), z: r2(own.z), vx: r2(own.vx), vz: r2(own.vz), kx: r2(own.kx), kz: r2(own.kz), fx: r2(own.fx), fz: r2(own.fz),
+        dash: Math.round(own.dash), cd: Math.round(own.cd), stun: Math.round(own.stun), air: Math.round(own.air), dn: own.dn, ack: lastImp ?? 0,
+      };
     },
     botInput() {
       if (!snap || !isPlayer) return {};
-      const f = botFrame(snap, self, botRng);
+      // a `?bot` tab is an owner: it must steer from the merged view (the snapshot's idea of me is a round trip old)
+      const merged = owner && own ? { ...snap, ps: snap.ps.map((p) => (p.s === self ? { ...p, ...own } : p)) } : snap;
+      const f = botFrame(merged, self, botRng);
       return { move: f.move, action: f.action };
     },
     destroy() { view?.t3.destroy(); },
@@ -299,7 +366,7 @@ export function mountBahnsteig(ctx) {
           showBig('SOG!', '#cfe8ff');
           if (e.side * (crew.get(self)?.z ?? 0) > 0) shake = 0.5; else shake = 0.25;
         } else if (e.k === 'd') {
-          if (who) audio.sfx('whoosh', { volume: e.s === self ? 0.5 : 0.25, rate: 1.5 });
+          if (who && !(owner && e.s === self)) audio.sfx('whoosh', { volume: e.s === self ? 0.5 : 0.25, rate: 1.5 });
         } else if (e.k === 's') {
           audio.sfx('bump', { rate: 0.85 + Math.random() * 0.35 });
           popup('BUMM!', e.x, 1.6, e.z, '#ffe066', 38);
@@ -326,7 +393,7 @@ export function mountBahnsteig(ctx) {
     t3.onFrame((dt) => {
       time += dt;
       const s = snap;
-      const age = Math.min(0.06, time - snapAt);
+      const age = Math.min(owner ? 0.25 : 0.06, time - snapAt);   // the ICE moves linearly: an owner extrapolates it further (it is not delayed like the remote players)
       const pull = ease(dt, 18);
 
       if (s) {
@@ -376,13 +443,28 @@ export function mountBahnsteig(ctx) {
           }
         } else { ice.visible = false; for (const m of streaks) m.visible = false; }
 
-        // players
-        for (const p of s.ps) {
-          const e = crew.get(p.s);
+        // players: mine from `own` (instant), remote ones from the delayed buffer (owner path), otherwise the latest snapshot extrapolated + smoothed (old path)
+        const wall = performance.now();
+        for (const q of s.ps) {
+          const e = crew.get(q.s);
           if (!e) continue;
-          const out = p.out !== null;
-          const tx = p.x + (p.vx + p.kx) * age, tz = p.z + (p.vz + p.kz) * age, ty = p.y + (out ? p.vy * age : 0);
-          if (!e.seen || Math.hypot(tx - e.x, tz - e.z) > 4) { e.x = tx; e.y = ty; e.z = tz; e.seen = true; }
+          const out = q.out !== null;
+          const mineLocal = owner && q.s === self && !!own && !out;
+          const smp = owner && q.s !== self ? tracks.get(q.s)?.sample(wall) : null;
+          const p = mineLocal ? { ...q, ...own } : smp ? { ...q, x: smp.x, z: smp.z, fx: smp.fx, fz: smp.fz } : q;
+          let localFall = false;
+          if (mineLocal) {   // over nothing for the coyote time: start falling at once, the host confirms (out) one round trip later
+            localFall = own.air >= C.COYOTE_MS;
+            if (localFall) { fallVy -= C.GRAVITY * dt; fallY = Math.max(BED_Y, fallY + fallVy * dt); } else { fallY = 0; fallVy = 0; }
+          }
+          const falling = out || localFall;
+          let tx, tz, ty;
+          if (mineLocal) { tx = own.x; tz = own.z; ty = fallY; }
+          else if (smp) { tx = smp.x; tz = smp.z; ty = p.y + (out ? p.vy * age : 0); }
+          else { tx = p.x + (p.vx + p.kx) * age; tz = p.z + (p.vz + p.kz) * age; ty = p.y + (out ? p.vy * age : 0); }
+          if (owner && q.s === self && out) ty = Math.min(ty, fallY);   // my local fall is ahead of the host's: never pop back up
+          if (mineLocal || smp) { e.x = tx; e.z = tz; e.y = ty; e.seen = true; }
+          else if (!e.seen || Math.hypot(tx - e.x, tz - e.z) > 4) { e.x = tx; e.y = ty; e.z = tz; e.seen = true; }
           else { e.x += (tx - e.x) * pull; e.z += (tz - e.z) * pull; e.y += (ty - e.y) * (out ? 1 : pull); }
           const sp = Math.hypot(p.vx + p.kx, p.vz + p.kz);
           e.group.position.set(e.x, e.y, e.z);
@@ -390,7 +472,7 @@ export function mountBahnsteig(ctx) {
           let dr = want - e.group.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr));
           e.group.rotation.y += dr * ease(dt, 16);
           const b = e.body;
-          if (out) {
+          if (falling) {
             if (e.y > BED_Y + 0.02) { e.spin += dt * 7; b.rotation.x += dt * 6; b.rotation.z += dt * 3; b.scale.set(1, 1, 1); }
             else {
               if (!e.landed) { e.landed = true; burst(e.x, BED_Y + 0.3, e.z, 0xb5ae9b, 8, 3); }
@@ -398,6 +480,7 @@ export function mountBahnsteig(ctx) {
             }
             e.shadow.visible = false;
           } else {
+            e.landed = false;
             const bob = Math.sin(time * 15 + p.s) * 0.07 * Math.min(1, sp / 5);
             let sy = 1 + bob, sxz = 1 - bob * 0.6, sz = sxz;
             if (p.dash > 0) { sz = 1.5; sy = 0.82; sxz = 0.9; }
@@ -413,12 +496,12 @@ export function mountBahnsteig(ctx) {
           }
           if (e.hat?.userData.prop) e.hat.userData.prop.rotation.y += dt * 18;
           if (e.arrow) {
-            e.arrow.visible = !out;
+            e.arrow.visible = !falling;
             e.arrow.position.set(e.x, e.y + 2.15 + Math.sin(time * 6) * 0.12, e.z);
             e.arrow.rotation.y += dt * 3;
           }
           // name label follows the head
-          const [lx, ly, lz] = proj(e.x, e.y + (out ? 1.1 : 1.95), e.z);
+          const [lx, ly, lz] = proj(e.x, e.y + (falling ? 1.1 : 1.95), e.z);
           put(e.nameEl, lx, ly - 26);
           e.nameEl.style.opacity = out ? '0.4' : '1';
           e.nameEl.style.display = lz < 1 ? '' : 'none';
@@ -437,7 +520,8 @@ export function mountBahnsteig(ctx) {
           el.style.opacity = p.out === null ? '1' : '0.5';
           el.style.textDecoration = p.out === null ? 'none' : 'line-through';
         }
-        const me = s.ps.find((p) => p.s === self);
+        const me0 = s.ps.find((p) => p.s === self);
+        const me = owner && own && me0 && me0.out === null ? { ...me0, ...own } : me0;   // my cooldown is the local one
         if (cdEl && me) {
           const ready = me.cd === 0 && me.out === null;
           setText2(cdEl, me.out !== null ? 'Du bist abgefahren' : ready ? 'Schubser bereit' : `Schubser ${(me.cd / 1000).toFixed(1).replace('.', ',')} s`);
