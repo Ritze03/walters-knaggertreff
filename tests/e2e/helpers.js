@@ -85,3 +85,39 @@ export const waitPhase = (page, phase, timeout = 120_000) =>
 export const waitState = (page, fn, arg, timeout = 120_000) =>
   page.waitForFunction(([f, a]) => { const s = window.__wk?.getState(); return !!s && new Function('s', 'a', `return (${f})(s, a)`)(s, a); },
     [fn.toString(), arg], { timeout, polling: 100 });
+
+/**
+ * THE per-minigame smoke helper (phase-B criterion: "starts, runs and awards placements when forced via ?mg=<id>&bot with 4 pages in one ?local context").
+ * Opens `players` pages (host + players-1 bot clients) in `context` on a `?local&mg=<id>&bot` match, starts it, and waits until EVERY page shows that minigame's
+ * results (phase minigameResults, state.minigame.id === id, results set). Asserts the basics itself: the minigame did not break (results.void falsy), every
+ * participant appears exactly once in placements, coinDelta exists. Everything else (page errors, game-specific checks) is up to the spec.
+ *
+ * Usage (a whole spec):
+ *   import { test, expect } from '@playwright/test';
+ *   import { runMinigame } from './helpers.js';
+ *   test('ubahn: runs with 4 bots and awards placements', async ({ context }) => {
+ *     const r = await runMinigame(context, 'ubahn');
+ *     expect(r.placements.flat().length).toBe(4);
+ *     expect(r.errors).toEqual([]);
+ *   });
+ *
+ * @param {import('@playwright/test').BrowserContext} context
+ * @param {string} id minigame id (a key of MINIGAMES)
+ * @param {{ players?:number, seed?:number, query?:string, timeout?:number }} [o] players 2..6 (team games need an even count >= 4); `query` is extra host URL params
+ * @returns {Promise<{ placements:number[][], results:object, minigame:object, state:object, errors:string[], host:any, clients:any[], pages:any[], match:object }>}
+ *   placements = state.minigame.results.placements (seat groups, best first); minigame = the final state.minigame descriptor (seats, mode, teams, coinDelta, ...);
+ *   state = the host's whole GameState at that moment; errors = page errors + console.errors of ALL pages so far (the live array, later errors are appended).
+ *   The pages stay open (they keep running the board afterwards), so a spec can inspect the DOM, e.g. that no 3D canvas leaked.
+ */
+export async function runMinigame(context, id, { players = 4, seed = 1, query = '', timeout = 5 * 60_000 } = {}) {
+  const match = await createMatch(context, { clients: players - 1, query: `stars=2&seed=${seed}&mg=${id}${query ? `&${query}` : ''}` });
+  const done = (s, want) => s.phase === 'minigameResults' && s.minigame?.id === want && !!s.minigame.results;
+  await Promise.all(match.pages.map((p) => waitState(p, done, id, timeout)));
+  const st = await state(match.host);
+  const mg = st.minigame, results = mg.results;
+  expect(results.void, `${id} broke (results.void): see errors`).toBeFalsy();
+  expect([...results.placements.flat()].sort((a, b) => a - b), `${id}: every participant exactly once`).toEqual([...mg.seats].sort((a, b) => a - b));
+  expect(mg.seats.length).toBe(players);
+  expect(mg.coinDelta).toBeTruthy();
+  return { placements: results.placements, results, minigame: mg, state: st, errors: match.errors, host: match.host, clients: match.clients, pages: match.pages, match };
+}
