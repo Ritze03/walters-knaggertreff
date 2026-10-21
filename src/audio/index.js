@@ -1,4 +1,4 @@
-// AudioApi singleton (contracts.js section 9). Safe in node: nothing touches window/AudioContext/speechSynthesis at import time.
+// AudioApi singleton (contracts.js section 9). Safe in node: nothing touches window/AudioContext/text-to-speech at import time.
 //
 // Unlock: ZzFX creates its AudioContext when its module is imported, so we import it lazily (dynamic import) and reuse ZZFX.audioContext for
 // SFX, music and the master gain. The import is triggered by the first of: a pointerdown/keydown (initAudio), or the first sfx()/music() call
