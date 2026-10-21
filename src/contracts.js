@@ -523,7 +523,7 @@ export const SESSION_EVENT = en('peerJoin', 'peerLeave', 'hostGone', 'hostBack',
 //   jump     keyboard Space              | gamepad A (button 0)
 //   action   keyboard E, Shift           | gamepad X (button 2), Y (button 3)
 //   confirm  keyboard Enter, Space       | gamepad A (button 0)
-//   back     keyboard Escape, Backspace  | gamepad B (button 1)
+//   back     keyboard Escape, Backspace (menus/lobby/board); Q, Backspace in minigames (Escape ignored there) | gamepad B (button 1)
 // Standard-mapping pads only (Xbox/PlayStation/generic report 'standard'); all connected pads are merged.
 
 export const ACTIONS = en('move', 'jump', 'action', 'confirm', 'back');

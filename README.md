@@ -102,6 +102,8 @@ Bei jedem Push auf `main` deployt GitHub Actions automatisch auf GitHub Pages.
 | `?stars=<n>` | Sternziel vorgeben |
 | `?mg=<id>` | Minispiel erzwingen, z. B. `forza` oder `ordnungsamt` |
 
+**Testmodus:** Der Host klickt in der Lobby auf „Testmodus", füllt bei Bedarf mit „+ Bot" oder „Bots auffüllen" auf, wählt ein beliebiges Minispiel und startet es direkt ohne Brett. Nach den Ergebnissen geht es zurück zur Auswahl; es zählt nichts (keine Münzen, keine Sterne). „Normales Spiel" verlässt den Testmodus.
+
 Beispiel: In zwei Tabs desselben Browsers `http://localhost:5173/walters-knaggertreff/?local&pid=a` und `http://localhost:5173/walters-knaggertreff/?local&pid=b` öffnen.
 
 ## Hinweis
