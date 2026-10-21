@@ -32,7 +32,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
 
   const world = root.add([k.pos(0, 0), k.scale(1)]);
   const back = world.add([k.pos(0, 0)]);
-  back.onDraw(() => { decor.drawStatic(); drawRoads(); drawTiles(); });   // static art first, decor's own animated bits after
+  back.onDraw(() => drawBaked());   // static art first (one textured quad), decor's own animated bits after
   const decor = decorBuild({ k, back, board, anim });
   const tiles = world.add([k.pos(0, 0)]);
   const props = world.add([k.pos(0, 0)]);   // star + traps
@@ -82,7 +82,34 @@ export function createScene({ k, root, board, anim, decorBuild }) {
       d.text(l.text, l.x, l.y + 1, LABEL_SIZE, '#ffffff', { line: 0 });
     }
   });
-  // static art (decor + roads + tiles) is drawn ONCE into a texture: immediate-mode shapes with outlines are too slow to redraw every frame
+  // ---------- baked static art ----------
+  // decor + roads + tile discs/icons never change, but are ~900 immediate-mode shapes (kaplay tessellates circles/outlines on the CPU every
+  // frame). They are rendered ONCE (first draw, so the font is up) with the very same draw calls into an offscreen Kaplay canvas and blitted
+  // as one quad in world space (so the camera moves/zooms it for free). Never rebaked: nothing in it depends on game state (the tile
+  // highlight / x2 badges / star / traps / markers / labels / tokens are live layers on top). Only the camera-reachable part of the oversized
+  // decor is baked (330 px each side, 100 above, 260 below: the lowest-zoom camera clamp reaches) at up to 2 texels per world px (capped to MAX_TEX = 4096, ~1.4 for the 2200 wide worlds).
+  const BAKE = { x0: -330, y0: -100, x1: board.world.w + 330, y1: board.world.h + 260 };
+  const MAX_TEX = 4096;
+  let baked = null;
+  const bakeStatic = () => {
+    const bw = BAKE.x1 - BAKE.x0, bh = BAKE.y1 - BAKE.y0;
+    const px = Math.min(2, MAX_TEX / Math.max(bw, bh));
+    const cv = k.makeCanvas(Math.ceil(bw * px), Math.ceil(bh * px));
+    cv.draw(() => {
+      k.pushTransform();
+      k.pushMatrix(new k.Mat4());   // drop the camera / parent transforms: bake in plain world coordinates
+      k.pushScale(k.width() / bw, k.height() / bh);   // the canvas always maps the logical screen onto its pixels: fit the baked region to it
+      k.pushTranslate(-BAKE.x0, -BAKE.y0);
+      decor.drawStatic(); drawRoads(); drawTiles();
+      k.popTransform();
+    });
+    return { cv, bw, bh };
+  };
+  const drawBaked = () => {
+    baked ??= bakeStatic();
+    k.drawUVQuad({ tex: baked.cv.fb.tex, pos: k.vec2(BAKE.x0, BAKE.y0), width: baked.bw, height: baked.bh, flipY: true });
+  };
+  back.onDestroy(() => { baked?.cv.free(); baked = null; });
   tiles.onDraw(() => {
     if (!view.endspurt) return;
     const t = k.time();
