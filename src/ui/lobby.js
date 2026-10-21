@@ -46,17 +46,21 @@ export function buildLobby({ state, selfSeat, isHost, inviteLink, boards, send, 
   }, 'Bereit!');
   const hint = h('p', { class: 'message', testid: 'lobby-hint' });
 
+  // two columns on a landscape window (who + invite | settings + start), so even six players fit a 960x540 window without scrolling
   const el = h('div', { class: 'card lobby', testid: 'lobby' },
     h('h2', null, 'Lobby'),
-    h('div', { class: 'field' }, 'Einladungslink', row({ class: 'linkrow' }, linkInput, copyBtn)),
-    list,
-    h('div', { class: 'field' }, 'Sterne zum Sieg',
-      isHost ? row({ class: 'stepper' }, h('button', { testid: 'star-dec', 'aria-label': 'Weniger', onclick: step(-1) }, '−'), stars,
-        h('button', { testid: 'star-inc', 'aria-label': 'Mehr', onclick: step(1) }, '+')) : stars,
-      h('small', { testid: 'star-hint', style: 'font-size:.8rem;opacity:.75' }, `${STAR_TARGET.default} Sterne ≈ 45 Min. mit 4 Spielern, jeder Stern mehr oder weniger ≈ 9 Min.`)),
-    h('div', { class: 'field' }, 'Brett', row({ class: 'tiles', testid: 'board-select' }, boardBtns)),
-    row({ class: 'actions' }, isHost ? start : readyBtn, h('button', { testid: 'leave', onclick: onLeave }, 'Verlassen')),
-    hint,
+    h('div', { class: 'lobby-cols' }, h('div', { class: 'lobby-col' },
+      h('div', { class: 'field' }, 'Einladungslink', row({ class: 'linkrow' }, linkInput, copyBtn)),
+      list,
+    ), h('div', { class: 'lobby-col' },
+      h('div', { class: 'field' }, 'Sterne zum Sieg',
+        isHost ? row({ class: 'stepper' }, h('button', { testid: 'star-dec', 'aria-label': 'Weniger', onclick: step(-1) }, '−'), stars,
+          h('button', { testid: 'star-inc', 'aria-label': 'Mehr', onclick: step(1) }, '+')) : stars,
+        h('small', { testid: 'star-hint', style: 'font-size:.8rem;opacity:.75' }, `${STAR_TARGET.default} Sterne ≈ 45 Min. mit 4 Spielern, jeder Stern mehr oder weniger ≈ 9 Min.`)),
+      h('div', { class: 'field' }, 'Brett', row({ class: 'tiles', testid: 'board-select' }, boardBtns)),
+      row({ class: 'actions' }, isHost ? start : readyBtn, h('button', { testid: 'leave', onclick: onLeave }, 'Verlassen')),
+      hint,
+    )),
     menuHints(),
   );
 

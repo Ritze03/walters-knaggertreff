@@ -14,6 +14,8 @@ const TILE = {
 const FOLLOW_ZOOM = 0.8;
 const TOKEN_SIZE = 54;
 const NAME_SIZE = 17;
+const LABEL_SIZE = 19;
+const PILL_H = NAME_SIZE + 9;
 /** token offsets for 2..4 players on one space: a small fan/grid, the lower ones drawn in front */
 const FAN = {
   2: [[-30, 0], [30, 0]],
@@ -58,6 +60,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   };
 
   // ---------- tiles ----------
+  const labelY = (sp) => (sp.type === 'event' ? sp.y + TILE[sp.type].r + 17 : sp.y - TILE[sp.type].r - 18);
   const drawTiles = () => {
     board.spaces.forEach((sp) => {
       const T = TILE[sp.type];
@@ -67,8 +70,9 @@ export function createScene({ k, root, board, anim, decorBuild }) {
       d.circle(sp.x, sp.y, T.r, T.c);
       d.circle(sp.x, sp.y, T.r * 0.78, shade(T.c, 0.28));
       d.text(icon, sp.x, sp.y, T.r * 0.95, '#ffffff', { line: 0 });
-      if (sp.label) d.text(sp.label, sp.x, sp.type === 'event' ? sp.y + T.r + 17 : sp.y - T.r - 18, 19, '#ffffff', { line: 5 });
     });
+    // labels in a second pass, after every tile: drawn with their own space, the next tile could cover them ("Start" sits right below s32)
+    for (const sp of board.spaces) if (sp.label) d.text(sp.label, sp.x, labelY(sp), LABEL_SIZE, '#ffffff', { line: 5 });
   };
   // static art (decor + roads + tiles) is drawn ONCE into a texture: immediate-mode shapes with outlines are too slow to redraw every frame
   tiles.onDraw(() => {
@@ -154,27 +158,61 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   }
 
   // ---------- name pills ----------
-  // A lone token gets its name right under it; tokens sharing a space list their names in a column under the space, so the names of a
-  // stack never overlap each other or hide under the other avatars / the white start disc.
+  // A lone token gets its name right under it; tokens sharing a space list their names in a block (two per row) under the space, so the
+  // names of a stack never overlap each other or hide under the other avatars / the white start disc.
+  // Pills also keep clear of the space labels ("Pfandautomat" under an event space, "Start" above the start disc): a pill (or a whole
+  // block) that would cover one is nudged off it -- a lone pill to the nearer side, a block downwards so it stays under its space.
   const nameW = new Map();
-  const pill = (name, x, y, color) => {
+  const pillW = (name) => {
     let w = nameW.get(name);
-    if (w === undefined) nameW.set(name, (w = k.formatText({ text: name, ...textOpts(k, NAME_SIZE) }).width));
-    d.rect(x, y, w + 18, NAME_SIZE + 9, '#1e1a2e', { anchor: 'center', r: (NAME_SIZE + 9) / 2, a: 0.85, line: 2, lineColor: color });
+    if (w === undefined) nameW.set(name, (w = k.formatText({ text: name, ...textOpts(k, NAME_SIZE) }).width + 18));
+    return w;
+  };
+  const pill = (name, x, y, color) => {
+    d.rect(x, y, pillW(name), PILL_H, '#1e1a2e', { anchor: 'center', r: PILL_H / 2, a: 0.85, line: 2, lineColor: color });
     d.dtext(name, x, y + 1, NAME_SIZE, '#ffffff', { line: 0 });
+  };
+  let labelBoxes = null;   // world-space boxes of the space labels (with their outline), built on first draw once the font is up
+  const labelsHit = (x0, x1, y0, y1) => {
+    labelBoxes ??= board.spaces.filter((sp) => sp.label).map((sp) => {
+      const w = textW(sp.label, LABEL_SIZE) + 10, y = labelY(sp);
+      return { x0: sp.x - w / 2, x1: sp.x + w / 2, y0: y - LABEL_SIZE / 2 - 5, y1: y + LABEL_SIZE / 2 + 5 };
+    });
+    return labelBoxes.filter((b) => x0 < b.x1 && x1 > b.x0 && y0 < b.y1 && y1 > b.y0);
+  };
+  /** y of a block of pills (w wide, h tall, centred on x, top edge at top) moved off every label it covers; down only, or the nearer way */
+  const clearOfLabels = (x, w, top, h, downOnly) => {
+    for (let n = 0; n < 4; n++) {
+      const hit = labelsHit(x - w / 2 - 2, x + w / 2 + 2, top - 2, top + h + 2);
+      if (!hit.length) break;
+      const down = Math.max(...hit.map((b) => b.y1)) + 3 - top, up = Math.min(...hit.map((b) => b.y0)) - 3 - (top + h);
+      top += downOnly || down < -up ? down : up;
+    }
+    return top;
+  };
+  const lonePill = (t, y) => {
+    const x = t.pos.x + t.off.x, name = names[t.seat];
+    pill(name, x, clearOfLabels(x, pillW(name), y - PILL_H / 2, PILL_H, false) + PILL_H / 2, profileColor[t.seat]);
   };
   nameLayer.onDraw(() => {
     const groups = new Map();
     for (const t of tokens) {
       if (!t) continue;
-      if (t.front || t.lift > 0) { pill(names[t.seat], t.pos.x + t.off.x, t.pos.y + t.off.y + 14 - t.lift, profileColor[t.seat]); continue; }
+      if (t.front || t.lift > 0) { pill(names[t.seat], t.pos.x + t.off.x, t.pos.y + t.off.y + 14 - t.lift, profileColor[t.seat]); continue; }   // in flight: no nudging, it would jitter
       if (!groups.has(t.spaceId)) groups.set(t.spaceId, []);
       groups.get(t.spaceId).push(t);
     }
     for (const list of groups.values()) {
-      if (list.length === 1) { const t = list[0]; pill(names[t.seat], t.pos.x + t.off.x, t.pos.y + t.off.y + 14, profileColor[t.seat]); continue; }
-      const p = list[0].pos;
-      list.forEach((t, i) => pill(names[t.seat], p.x, p.y + 44 + i * (NAME_SIZE + 12), profileColor[t.seat]));
+      if (list.length === 1) { lonePill(list[0], list[0].pos.y + list[0].off.y + 14); continue; }
+      // two pills per row (half the height of a single column, so it rarely runs into the next space's label)
+      const p = list[0].pos, step = NAME_SIZE + 12, G = 3, rows = Math.ceil(list.length / 2);
+      const ws = list.map((t) => pillW(names[t.seat]));
+      const w = Math.max(...ws.map((_, i) => (i % 2 ? 0 : i + 1 < ws.length ? 2 * Math.max(ws[i], ws[i + 1]) + 2 * G : ws[i])));
+      const top = clearOfLabels(p.x, w, p.y + 44 - PILL_H / 2, (rows - 1) * step + PILL_H, true);
+      list.forEach((t, i) => {
+        const pair = i % 2 ? true : i + 1 < list.length, x = !pair ? p.x : i % 2 ? p.x + G + ws[i] / 2 : p.x - G - ws[i] / 2;
+        pill(names[t.seat], x, top + PILL_H / 2 + Math.floor(i / 2) * step, profileColor[t.seat]);
+      });
     }
   });
 
