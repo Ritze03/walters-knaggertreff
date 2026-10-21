@@ -1,7 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { MSG, SESSION_EVENT, KEYS, PROTOCOL_VERSION } from '../contracts.js';
-import { createSession } from './session.js';
+import { createSession, QUEUE_MAX, QUEUE_MAX_AGE_MS } from './session.js';
 import { createTransport as createLocal } from './transports/local.js';
 import { loadIdentity, saveProfile, isHostOf, markHost, loadSave, storeSave } from './identity.js';
 
@@ -82,7 +82,7 @@ test('host sendIntent loops back to its own handlers', async () => {
   assert.deepEqual(got[0], { data: { intent: { type: 'startGame' } }, from: 'host' });
 });
 
-test('client sendIntent is a no-op while the host is absent', async () => {
+test('client sendIntent reaches no other client while the host is absent', async () => {
   const g = gameIdOf();
   const a = make(g, 'alice'), b = make(g, 'bob');
   await until(() => a.peers().length === 1);
@@ -91,6 +91,63 @@ test('client sendIntent is a no-op while the host is absent', async () => {
   await wait(150);
   assert.equal(got.length, 0);
   assert.equal(a.hostPlayerId(), null);
+});
+
+test('intents sent while the host is unknown are delivered in order once it appears; perishable mgInput/mgOwn are not replayed', async () => {
+  const g = gameIdOf();
+  const a = make(g, 'alice');
+  a.sendIntent({ type: 'a' });
+  a.sendToHost(MSG.mgInput, { seq: 1 });
+  a.sendIntent({ type: 'b' });
+  a.sendToHost(MSG.mgOwn, { seq: 2, s: {} });
+  a.sendIntent({ type: 'c' });
+  const host = make(g, 'host', true);
+  const intents = record(host, MSG.intent), inputs = record(host, MSG.mgInput), owns = record(host, MSG.mgOwn);
+  await until(() => intents.length === 3);
+  assert.deepEqual(intents.map((m) => m.data.intent.type), ['a', 'b', 'c']);
+  assert.ok(intents.every((m) => m.from === 'alice'));
+  a.sendIntent({ type: 'd' });   // live again: goes straight out, after the queued ones
+  await until(() => intents.length === 4);
+  await wait(100);
+  assert.equal(inputs.length + owns.length, 0);
+  assert.deepEqual(intents.map((m) => m.data.intent.type), ['a', 'b', 'c', 'd']);
+});
+
+test('the outbox keeps only the newest QUEUE_MAX messages and drops entries older than QUEUE_MAX_AGE_MS', async () => {
+  const g = gameIdOf();
+  const a = make(g, 'alice');
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t;
+  try {
+    a.sendIntent({ type: 'stale' });
+    t += QUEUE_MAX_AGE_MS + 1;
+    for (let i = 0; i < QUEUE_MAX + 8; i++) a.sendIntent({ type: 'i', i });
+  } finally { Date.now = realNow; }
+  const host = make(g, 'host', true);
+  const intents = record(host, MSG.intent);
+  await until(() => intents.length >= QUEUE_MAX);
+  await wait(150);
+  assert.deepEqual(intents.map((m) => m.data.intent.i), Array.from({ length: QUEUE_MAX }, (_, k) => k + 8));
+});
+
+test('intents sent while a silent host is considered gone are delivered when it speaks again', { timeout: 15000 }, async () => {
+  const g = gameIdOf();
+  const real = createLocal(g);
+  let muted = false;
+  const flaky = { ...real, send: (...args) => { if (!muted) real.send(...args); } };
+  const host = createSession({ gameId: g, transport: flaky, profile: profileOf('host'), playerId: 'host', isHost: true });
+  open.push(host);
+  const a = make(g, 'alice');
+  const gone = record(a, SESSION_EVENT.hostGone), intents = record(host, MSG.intent);
+  await until(() => a.hostPlayerId() === 'host');
+  muted = true;
+  await until(() => gone.length === 1, 8000);
+  a.sendIntent({ type: 'x' });
+  a.sendIntent({ type: 'y' });
+  muted = false;
+  await until(() => intents.length === 2, 4000);
+  assert.deepEqual(intents.map((m) => m.data.intent.type), ['x', 'y']);
 });
 
 test('broadcast reaches all peers, and self only with {self:true}', async () => {

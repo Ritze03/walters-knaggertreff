@@ -6,6 +6,10 @@ import { withLag } from './lag.js';
 
 export const HEARTBEAT_MS = 1000;   // every session broadcasts a tiny `hb` this often
 export const SILENCE_MS = 5000;     // a peer we have heard NOTHING from (any message incl. hb) for this long is treated as left
+export const QUEUE_MAX = 32;        // client -> host messages kept while the host link is down (oldest dropped first)
+export const QUEUE_MAX_AGE_MS = 10000;   // ... and dropped when they are older than this at flush time
+// 30 Hz streams where only the newest frame matters: a replay after a reconnect would be stale, so these are never queued (just lost while disconnected)
+const PERISHABLE = new Set([MSG.mgInput, MSG.mgOwn]);
 const HB = 'hb';                    // session-internal action, not part of MSG
 
 export function createSession({ gameId, transport, profile, playerId, isHost, isBot = false, lagMs = 0 }) {
@@ -20,6 +24,7 @@ export function createSession({ gameId, transport, profile, playerId, isHost, is
   const peerOf = new Map();     // playerId -> transport peerId (latest connection wins)
   let hostPeerId = null;        // clients only: peerId of the peer that announced isHost:true
   let closed = false;
+  let outbox = [];              // clients only: { type, data, at } waiting for a host link (reliable messages = intents)
 
   const emit = (type, data, from) => {
     for (const h of [...(handlers.get(type) ?? [])]) {
@@ -84,6 +89,13 @@ export function createSession({ gameId, transport, profile, playerId, isHost, is
       }
     }
     if (answered) sendHello(peerId, false);
+    if (hostPeerId === peerId) flushOutbox();   // after our hello, so the host knows who these intents are from
+  }
+
+  function flushOutbox() {
+    const now = Date.now(), list = outbox;
+    outbox = [];
+    for (const m of list) if (now - m.at <= QUEUE_MAX_AGE_MS) link.send(m.type, m.data, hostPeerId);
   }
 
   function onInbound(type, data, peerId) {
@@ -110,6 +122,12 @@ export function createSession({ gameId, transport, profile, playerId, isHost, is
   const sendToHost = (type, data) => {
     if (isHost) queueMicrotask(() => { if (!closed) emit(type, data, playerId); });
     else if (hostPeerId) link.send(type, data, hostPeerId);
+    else if (!PERISHABLE.has(type)) {   // host link down (silence / replaced connection): keep it for when the host is back
+      const now = Date.now();
+      outbox = outbox.filter((m) => now - m.at <= QUEUE_MAX_AGE_MS);
+      outbox.push({ type, data, at: now });
+      if (outbox.length > QUEUE_MAX) outbox.shift();
+    }
   };
 
   return {
