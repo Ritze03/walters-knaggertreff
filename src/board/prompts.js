@@ -101,7 +101,7 @@ export function createPrompts({ k, ui, scene, anim, audio, session, fx }) {
       detail: st.players[s].coins <= 0 ? 'Der hat nichts zu klauen.' : `Klau ${st.seats[s].profile.name} bis zu ${st.rules.stealCoins} Pfand.`, seat: s,
     }));
     prompts.menu = openMenu({
-      title: '🪙 Wen beklauen?', cards, hint: `${PICK}   ${HINT.confirm} bestätigen   ${HINT.back} zurück`,
+      title: '🍾 Wen beklauen?', cards, hint: `${PICK}   ${HINT.confirm} bestätigen   ${HINT.back} zurück`,
       sel: Math.max(0, cards.findIndex((c) => !c.disabled)),
       onPick: (i) => send({ type: 'useItem', item: ITEM.steal, targetSeat: cards[i].seat }),
       onBack: () => { prompts.menu.close(); rollMenu(st, seat, cardIndexOf(st, seat, ITEM.steal)); },

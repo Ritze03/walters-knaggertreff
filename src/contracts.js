@@ -90,7 +90,7 @@ export const ITEM = en('doubleDice', 'goldenDoener', 'steal', 'trap');
 export const ITEM_INFO = freeze({
   doubleDice:   { name: 'Doppelwürfel',   emoji: '🎲', blurb: 'Würfle diese Runde doppelt.' },
   goldenDoener: { name: 'Goldener Döner', emoji: '🥙', blurb: 'Ein zusätzlicher Wurf.' },
-  steal:        { name: 'Münzklau',       emoji: '🪙', blurb: 'Klau einem Mitspieler Münzen.' },
+  steal:        { name: 'Flaschenklau',       emoji: '🍾', blurb: 'Klau einem Mitspieler Flaschen.' },
   trap:         { name: 'Stolperfalle',   emoji: '🪤', blurb: 'Leg eine Falle auf ein Feld.' },
 });
 

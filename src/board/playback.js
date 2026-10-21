@@ -146,9 +146,9 @@ export function createPlayback({ k, scene: S, fx, anim: A, audio }) {
       } else if (ev.item === ITEM.steal) {
         S.cam.fit([S.tokenTop(ev.seat), S.tokenTop(ev.targetSeat)], 260, 0.9);
         say('sybau');
-        S.burst(S.tokenTop(ev.targetSeat), '🪙', 8, { to: S.tokenTop(ev.seat), dur: 0.7 });
+        S.burst(S.tokenTop(ev.targetSeat), '🍾', 8, { to: S.tokenTop(ev.seat), dur: 0.7 });
         tok(ev.targetSeat)?.av.bounce();
-        await fx.banner(`🪙 ${who} beklaut ${name(st, ev.targetSeat)}!`, { color: '#9b5de5', size: 48, hold: 1.0, y: 0.25 });
+        await fx.banner(`🍾 ${who} beklaut ${name(st, ev.targetSeat)}!`, { color: '#9b5de5', size: 48, hold: 1.0, y: 0.25 });
         S.cam.follow(ev.seat);
       } else if (ev.item === ITEM.trap) {
         const p = S.spacePos(ev.spaceId);
@@ -227,7 +227,7 @@ export function createPlayback({ k, scene: S, fx, anim: A, audio }) {
       S.cam.overview();
       S.cam.shake(26, 0.9);
       fx.flash('#ff8a1f', 0.55, 0.7);
-      await fx.banner('🔥 ENDSPURT! 🔥', { sub: 'Münzfelder zählen jetzt doppelt!', color: '#ff5a1f', size: 88, hold: 2.2, y: 0.4, tilt: -3 });
+      await fx.banner('🔥 ENDSPURT! 🔥', { sub: 'Flaschenfelder zählen jetzt doppelt!', color: '#ff5a1f', size: 88, hold: 2.2, y: 0.4, tilt: -3 });
     },
 
     async victory(ev, st) {

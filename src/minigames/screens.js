@@ -13,7 +13,7 @@ const bg = (k, parent) => {
 export function buildIntro({ k, parent, mod, desc, state, participant, addAvatar }) {
   bg(k, parent);
   const duel = desc.purpose === 'duel';
-  label(k, parent, duel ? `⚔️ DUELL${state.rules?.duelStake ? ` · Einsatz ${state.rules.duelStake} Münzen` : ''}` : '🎮 MINISPIEL', SCREEN.w / 2, 46, { size: 28, color: '#ffd43b', outline: [5, INK] });
+  label(k, parent, duel ? `⚔️ DUELL${state.rules?.duelStake ? ` · Einsatz ${state.rules.duelStake} Flaschen` : ''}` : '🎮 MINISPIEL', SCREEN.w / 2, 46, { size: 28, color: '#ffd43b', outline: [5, INK] });
   label(k, parent, mod.name, SCREEN.w / 2, 120, { size: 66, color: '#ffffff', outline: [8, '#c0392b'] });
   label(k, parent, mod.instructions, SCREEN.w / 2, 200, { size: 26, width: 940, align: 'center', anchor: 'top', color: '#f2e8d5', lineSpacing: 8 });
   box(k, parent, 190, 372, 900, 52 + mod.controlHints.length * 36, '#000000', { radius: 14, opacity: 0.35, outline: [3, '#ffd43b'] });
@@ -74,7 +74,7 @@ export function buildResults({ k, parent, mod, desc, state, selfSeat, addAvatar 
     label(k, parent, state.seats[s].profile.name, 420, desc.results?.labels?.[s] ? y - rowH * 0.17 : y, { size: Math.min(30, rowH * 0.38), anchor: 'left', color: me ? '#1b2a49' : '#ffffff', width: 330 });
     if (res.labels?.[s]) label(k, parent, res.labels[s], 420, y + rowH * 0.2, { size: Math.min(20, rowH * 0.26), anchor: 'left', color: me ? '#5a4a00' : '#c8c8d8', width: 420 });
     const d = delta[s] ?? 0;
-    label(k, parent, '🪙', 1030, y, { size: Math.min(34, rowH * 0.45), anchor: 'right' });   // own label: emoji must not be tinted
+    label(k, parent, '🍾', 1030, y, { size: Math.min(34, rowH * 0.45), anchor: 'right' });   // own label: emoji must not be tinted
     label(k, parent, `${d > 0 ? '+' : ''}${d}`, 972, y, { size: Math.min(40, rowH * 0.52), anchor: 'right', color: d > 0 ? (me ? '#2b8a3e' : '#8ce99a') : d < 0 ? (me ? '#c0392b' : '#ff8080') : '#8a8a8a' });
   });
   const bar = box(k, parent, 0, SCREEN.h - 10, SCREEN.w, 10, '#ffd43b');

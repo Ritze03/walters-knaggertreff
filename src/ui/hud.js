@@ -26,12 +26,12 @@ export function renderHud(el, state, selfSeat) {
       h('div', { class: 'chip-body' },
         h('span', { class: 'name' }, seat.profile.name, seat.connected ? '' : ' (weg)'),
         h('span', { class: 'stats' },
-          h('span', null, '🪙 ', h('b', { testid: `hud-coins-${seat.index}` }, String(p.coins))),
+          h('span', null, '🍾 ', h('b', { testid: `hud-coins-${seat.index}` }, String(p.coins))),
           h('span', null, '⭐ ', h('b', { testid: `hud-stars-${seat.index}` }, String(p.stars))),
           h('span', { class: 'items', testid: `hud-items-${seat.index}` }, p.items.map((it) => h('i', { title: ITEM_INFO[it].name }, ITEM_INFO[it].emoji))))));
     })),
     h('div', { class: 'hud-info', testid: 'hud-info' },
       h('span', { testid: 'hud-round' }, roundText(state, compact)), h('span', { testid: 'hud-target' }, `Ziel ⭐ ${state.settings.starTarget}`)),
-    ...(state.endspurt ? [h('div', { class: 'endspurt', testid: 'endspurt' }, 'ENDSPURT! Münzfelder zählen doppelt')] : []),
+    ...(state.endspurt ? [h('div', { class: 'endspurt', testid: 'endspurt' }, 'ENDSPURT! Flaschenfelder zählen doppelt')] : []),
   );
 }

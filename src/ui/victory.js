@@ -19,7 +19,7 @@ export function buildVictory({ state, isHost, send, onTitle }) {
       const s = state.seats[i], p = state.players[i];
       return h('li', { testid: `standing-${i}`, class: i === state.winner ? 'self' : '' },
         h('span', { class: 'rank' }, `${rank + 1}.`), blob(s.profile, 32), h('span', { class: 'name' }, s.profile.name),
-        h('span', null, `⭐ ${p.stars}`), h('span', null, `🪙 ${p.coins}`));
+        h('span', null, `⭐ ${p.stars}`), h('span', null, `🍾 ${p.coins}`));
     })),
     row({ class: 'actions' }, isHost && rematch, back),
     !isHost && h('p', { class: 'message' }, 'Der Host entscheidet, ob es eine Revanche gibt.'),
