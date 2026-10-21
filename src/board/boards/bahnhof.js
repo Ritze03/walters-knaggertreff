@@ -78,6 +78,7 @@ export default {
   blurb: 'Zug fällt aus, Schienenersatzverkehr und Deutschlandticket. Grund: Ja.',
   world: { w: 2200, h: 1400 },
   theme: { bg: '#1b2531', accent: '#ff4a3d' },
+  tileIcons: { blue: '🚆', red: '🧾' },   // presentation only: the blue/red tile glyphs (Späti-Kiez keeps the default 🍾/💸)
   startSpaceId: 'b00',
   spaces: T.map(([id, type, x, y, next, eventId, label]) => ({ id, type, x, y, next, ...(eventId ? { eventId } : {}), ...(label ? { label } : {}) })),
   starSpaceIds: ['b04', 'b16', 'b24', 'b30', 'g3'],

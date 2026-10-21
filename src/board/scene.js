@@ -3,19 +3,20 @@ import { textOpts } from '../minigames/font.js';
 import { addAvatar } from '../avatar/index.js';
 import { SCREEN } from '../contracts.js';
 import { makeDraw, shade } from './draw.js';
+import { layoutLabels, LABEL_SIZE, LABEL_H, TILE_R } from './labels.js';
 
 const TILE = {
-  start: { c: '#f5f0e6', icon: '🏁', r: 46 },
-  blue: { c: '#3fa9f5', icon: '🍾', r: 36 },
-  red: { c: '#ef4b5a', icon: '💸', r: 36 },
-  event: { c: '#ffc233', icon: '❓', r: 38 },
-  shop: { c: '#3ecf7a', icon: '🏪', r: 50 },
+  start: { c: '#f5f0e6', icon: '🏁', r: TILE_R.start },
+  blue: { c: '#3fa9f5', icon: '🍾', r: TILE_R.blue },   // icon: default, a board overrides it with `tileIcons: { blue, red }`
+  red: { c: '#ef4b5a', icon: '💸', r: TILE_R.red },
+  event: { c: '#ffc233', icon: '❓', r: TILE_R.event },
+  shop: { c: '#3ecf7a', icon: '🏪', r: TILE_R.shop },
 };
 const FOLLOW_ZOOM = 0.8;
 const TOKEN_SIZE = 54;
 const NAME_SIZE = 17;
-const LABEL_SIZE = 19;
 const PILL_H = NAME_SIZE + 9;
+const LABEL_PILL = '#1e1a2e';
 /** token offsets for 2..4 players on one space: a small fan/grid, the lower ones drawn in front */
 const FAN = {
   2: [[-30, 0], [30, 0]],
@@ -36,6 +37,7 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   const tiles = world.add([k.pos(0, 0)]);
   const props = world.add([k.pos(0, 0)]);   // star + traps
   const tokenLayer = world.add([k.pos(0, 0)]);
+  const labelLayer = world.add([k.pos(0, 0)]);   // space labels: above the tokens, so an avatar can never hide one
   const nameLayer = world.add([k.pos(0, 0)]);   // name pills above every token (drawn after them, so never hidden)
   const overlay = world.add([k.pos(0, 0)]);  // markers, turn arrow, step badge
   const fxLayer = world.add([k.pos(0, 0)]);
@@ -60,20 +62,26 @@ export function createScene({ k, root, board, anim, decorBuild }) {
   };
 
   // ---------- tiles ----------
-  const labelY = (sp) => (sp.type === 'event' ? sp.y + TILE[sp.type].r + 17 : sp.y - TILE[sp.type].r - 18);
   const drawTiles = () => {
     board.spaces.forEach((sp) => {
       const T = TILE[sp.type];
-      const icon = sp.type === 'event' ? (decor.eventIcons[sp.eventId] ?? T.icon) : T.icon;
+      const icon = sp.type === 'event' ? (decor.eventIcons[sp.eventId] ?? T.icon) : (board.tileIcons?.[sp.type] ?? T.icon);
       d.ellipse(sp.x + 3, sp.y + T.r * 0.55, T.r * 1.02, T.r * 0.5, '#000000', { a: 0.35 });
       d.circle(sp.x, sp.y, T.r + 5, '#1e1a2e');
       d.circle(sp.x, sp.y, T.r, T.c);
       d.circle(sp.x, sp.y, T.r * 0.78, shade(T.c, 0.28));
       d.text(icon, sp.x, sp.y, T.r * 0.95, '#ffffff', { line: 0 });
     });
-    // labels in a second pass, after every tile: drawn with their own space, the next tile could cover them ("Start" sits right below s32)
-    for (const sp of board.spaces) if (sp.label) d.text(sp.label, sp.x, labelY(sp), LABEL_SIZE, '#ffffff', { line: 5 });
   };
+  // space labels in their own layer (above the tokens, below the name pills), each on a pill; spots come from layoutLabels (no two overlap)
+  let labelList = null;   // built on first use, once the font is up
+  const getLabels = () => (labelList ??= [...layoutLabels(board, textW).values()].map((l) => ({ ...l, text: spaces.get(l.id).label })));
+  labelLayer.onDraw(() => {
+    for (const l of getLabels()) {
+      d.rect(l.x, l.y, l.w, LABEL_H, LABEL_PILL, { anchor: 'center', r: LABEL_H / 2, a: 0.82, line: 2, lineColor: '#c9c3e6' });
+      d.text(l.text, l.x, l.y + 1, LABEL_SIZE, '#ffffff', { line: 0 });
+    }
+  });
   // static art (decor + roads + tiles) is drawn ONCE into a texture: immediate-mode shapes with outlines are too slow to redraw every frame
   tiles.onDraw(() => {
     if (!view.endspurt) return;
@@ -172,13 +180,8 @@ export function createScene({ k, root, board, anim, decorBuild }) {
     d.rect(x, y, pillW(name), PILL_H, '#1e1a2e', { anchor: 'center', r: PILL_H / 2, a: 0.85, line: 2, lineColor: color });
     d.dtext(name, x, y + 1, NAME_SIZE, '#ffffff', { line: 0 });
   };
-  let labelBoxes = null;   // world-space boxes of the space labels (with their outline), built on first draw once the font is up
   const labelsHit = (x0, x1, y0, y1) => {
-    labelBoxes ??= board.spaces.filter((sp) => sp.label).map((sp) => {
-      const w = textW(sp.label, LABEL_SIZE) + 10, y = labelY(sp);
-      return { x0: sp.x - w / 2, x1: sp.x + w / 2, y0: y - LABEL_SIZE / 2 - 5, y1: y + LABEL_SIZE / 2 + 5 };
-    });
-    return labelBoxes.filter((b) => x0 < b.x1 && x1 > b.x0 && y0 < b.y1 && y1 > b.y0);
+    return getLabels().filter((b) => x0 < b.x1 && x1 > b.x0 && y0 < b.y1 && y1 > b.y0);
   };
   /** y of a block of pills (w wide, h tall, centred on x, top edge at top) moved off every label it covers; down only, or the nearer way */
   const clearOfLabels = (x, w, top, h, downOnly) => {
