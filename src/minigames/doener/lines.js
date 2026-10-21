@@ -1,0 +1,20 @@
+// Voice lines for "Döner mit alles" (pure data, no imports). wrongX = customer complains about something that should not be on the wrap,
+// missX = something is missing.
+export default {
+  start: ['Einmal mit alles?', 'Mit scharf?', 'Döner macht schöner.'],
+  happy: ['Das crazy', 'Döner macht schöner.', 'Läuft, Chef!'],
+  wrongFleisch: ['Ich wollte nicht so viel Fleisch!'],
+  wrongSalat: ['Ich wollte keinen Salat, Chef!'],
+  wrongTomate: ['Ohne Tomate hab ich gesagt!'],
+  wrongZwiebel: ['Ich hab ohne Zwiebel gesagt!'],
+  wrongSosse: ['Ohne Soße, Chef! Ohne!'],
+  wrongScharf: ['Nicht scharf, Chef! Nicht scharf!'],
+  missFleisch: ['Wo ist das Fleisch, Chef?'],
+  missSalat: ['Wo bleibt mein Salat?'],
+  missTomate: ['Eine Tomate fehlt, Chef.'],
+  missZwiebel: ['Ohne Zwiebel? Ich wollte Zwiebel!'],
+  missSosse: ['Der Döner ist trocken, Chef!'],
+  missScharf: ['Ich sagte scharf! Scharf!'],
+  win: ['Du bist der Dönermeister!'],
+  lose: ['Döner kalt, Kunde weg.'],
+};
